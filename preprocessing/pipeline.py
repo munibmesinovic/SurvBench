@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Dict, Optional, List
 from sklearn.preprocessing import StandardScaler
 
-from ..data.eicu_loader import eICUDataLoader
-from ..data.mcmed_loader import MCMEDDataLoader
-from .labels import SurvivalLabelsProcessor
-from .timeseries import TimeSeriesAggregator
+from data.eicu_loader import eICUDataLoader
+from data.mcmed_loader import MCMEDDataLoader
+from data.mimiciv_loader import MIMICIVDataLoader
+from preprocessing.labels import SurvivalLabelsProcessor
+from preprocessing.timeseries import TimeSeriesAggregator
 
 
 class PreprocessingPipeline:
@@ -28,6 +29,8 @@ class PreprocessingPipeline:
             self.loader = eICUDataLoader(config)
         elif dataset_name == 'mcmed':
             self.loader = MCMEDDataLoader(config)
+        elif dataset_name == 'mimiciv':  # <-- ADD THIS LINE
+            self.loader = MIMICIVDataLoader(config)  # <-- ADD THIS LINE
         else:
             raise ValueError(f"Unknown dataset: {dataset_name}")
 

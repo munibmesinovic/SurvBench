@@ -1,6 +1,6 @@
-from .pipeline import PreprocessingPipeline
-from .labels import SurvivalLabelsProcessor
-from .timeseries import TimeSeriesAggregator
+from preprocessing.pipeline import PreprocessingPipeline
+from preprocessing.labels import SurvivalLabelsProcessor
+from preprocessing.timeseries import TimeSeriesAggregator
 
 __all__ = [
     'PreprocessingPipeline',

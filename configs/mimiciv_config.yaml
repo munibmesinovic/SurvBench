@@ -1,88 +1,93 @@
 # MIMIC-IV Dataset Configuration
-# Outcome: In-hospital mortality (single risk)
 
 dataset:
   name: mimiciv
-  base_dir: /path/to/mimiciv/data  # UPDATE THIS PATH
-  
+  base_dir: data/mimiciv_raw_data  # <-- UPDATE THIS to your raw file directory
+
   files:
-    admissions: hosp/admissions.csv
-    patients: hosp/patients.csv
-    chartevents: icu/chartevents_processed.csv
-    labevents: hosp/labevents_processed.csv
-    diagnoses_icd: hosp/diagnoses_icd.csv
-    radiology_embeddings: hosp/radiology_embeddings.csv  # Optional
-  
+    # These keys now point to your RAW MIMIC-IV files
+    icustays: icustays.csv
+    patients: patients.csv
+    admissions: admissions.csv
+    timeseries_vitals: chartevents.csv
+    timeseries_lab: labevents.csv
+    icd_codes: diagnoses_icd.csv # Use .csv if not gzipped
+    radiology_embeddings: radiology.csv # This key is used to load radiology.csv
+
   cohort:
-    min_stay_hours: 24
-    max_age: 89
+    min_stay_hours: 24 # This is applied in the loader
+    max_age: 120 # Age filter is applied in loader
 
 preprocessing:
   num_windows: 6
-  window_size_hours: 4
-  max_hours: 24
-  max_horizon_hours: 720
-  n_time_bins: 10
+  window_size_hours: 4          # 24h / 6 windows = 4h/window
+  max_hours: 24                 # Input window T=6 (0-23h)
+  max_horizon_hours: 240        # Label/outcome horizon (10 days)
+  n_time_bins: 10               # 10 bins for 10-day horizon
+
   discretisation_method: quantiles
   missingness_threshold: 0.01
+
+  # Label columns (set by loader)
   event_col: event
   duration_col: duration
-  
+
   imputation:
     static: mean
     dynamic: zero
-  
+
   scaling:
     method: standard
     apply_to: dynamic
 
 splits:
-  train: 0.7
+  train: 0.7 # Note: notebook was 80/10/10, this is 70/10/20
   val: 0.1
   test: 0.2
   seed: 42
-  split_by: patient
+  split_by: patient # Uses 'subject_id' from loader
 
+# --- ENABLE ALL MODALITIES ---
 modalities:
   timeseries: true
   static: true
-  icd: false
-  radiology: false
+  icd: true
+  radiology: false # <-- SET TO FALSE to skip (saves 3+ hours)
 
+# ICD code processing (if enabled)
 icd_processing:
-  encoding: onehot
-  top_n_codes: 500
-  embedding_dim: 128
-  use_precomputed: false
+  top_n_codes: 500  # From notebook
 
+# Radiology processing (if enabled)
 radiology_processing:
-  use_precomputed: true
-  embedding_dim: 768
-  aggregation: mean
+  bert_batch_size: 32
+  bert_max_length: 1024 # Notebook used 4096, but 1024 is safer
 
 output:
-  dir: /path/to/output/mimiciv_processed  # UPDATE THIS PATH
+  dir: data/mimiciv_processed_final  # <-- UPDATE THIS to your desired output folder
   prefix: mimiciv
   save_format: numpy
-  
+
   files:
+    # Data splits
     x_train: x_train_mimiciv.npy
     x_val: x_val_mimiciv.npy
     x_test: x_test_mimiciv.npy
+
+    # Labels
     y_train: y_train_surv_mimiciv.p
     y_val: y_val_surv_mimiciv.p
     durations_test: durations_test_mimiciv.npy
     events_test: events_test_mimiciv.npy
+
+    # Auxiliary
     cuts: cuts_mimiciv.npy
     out_features: out_features_mimiciv.npy
-    feature_names: feature_names.pkl
-    modality_info: modality_info.pkl
-    scaler: scaler.pkl
+    feature_names: feature_names_mimiciv.pkl
+    modality_info: modality_info_mimiciv.pkl
+    scaler: scaler_mimiciv.pkl
+
+    # Masks
     train_mask: x_train_mimiciv_mask.npy
     val_mask: x_val_mimiciv_mask.npy
     test_mask: x_test_mimiciv_mask.npy
-
-logging:
-  level: INFO
-  save_log: true
-  log_file: mimiciv_preprocessing.log

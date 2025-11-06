@@ -5,9 +5,11 @@ import yaml
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# This tells Python to look for packages in your "SurvBench" folder
+project_root = str(Path(__file__).parent.parent)
+sys.path.insert(0, project_root)
 
-from survival_benchmark.preprocessing.pipeline import PreprocessingPipeline
+from preprocessing.pipeline import PreprocessingPipeline
 
 
 def load_config(config_path: str) -> dict:

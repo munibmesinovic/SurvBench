@@ -1,122 +1,104 @@
 # MC-MED Dataset Configuration
-# Emergency Department data with competing risks outcomes
 
 dataset:
   name: mcmed
-  base_dir: /path/to/mcmed/data  # UPDATE THIS PATH
-  
+  base_dir: data/mcmed_raw_data  # UPDATE THIS PATH to your raw files
+
   files:
-    labels: labels.csv                        # stay_id, ed_los_hours, outcome
-    static: static_features.csv               # stay_id, demographics
-    timeseries: timeseries_vitals.csv         # stay_id, time_hours, vital columns
-    icd_codes: icd_codes.csv                  # stay_id, ICD code columns (optional)
-    icd_embeddings: icd_embeddings.npy        # Pre-computed embeddings (optional)
-    radiology_embeddings: radiology_emb.csv   # stay_id, embedding columns (optional)
-    radiology_text: radiology_text.csv        # stay_id, report_text (optional)
-  
+    # These keys now point to your RAW files
+    labels: visits.csv
+    static: visits.csv
+    timeseries_vitals: numerics.csv
+    timeseries_lab: labs.csv
+    icd_codes: pmh.csv
+    radiology_embeddings: rads.csv # This key is used to load rads.csv
+
   cohort:
-    min_stay_hours: 1.0                       # Minimum ED stay duration
-    max_age: 120                              # Maximum age filter
-    exclude_columns:
-      - stay_id_original
-      - hospital_id
-  
+    min_stay_hours: 0.0  # Filtering is handled by loader
+    max_age: 120
+
   # Competing risks configuration
   competing_risks:
     enabled: true
     outcome_mapping:
-      0: "Censored"           # No event / discharged home
-      1: "ICU Admission"      # Transfer to ICU
-      2: "Hospital Admission" # Regular hospital admission
-      3: "Observation"        # Observation unit
+      0: "Censored"           # Discharge
+      1: "ICU Admission"      # ICU
+      2: "Hospital Admission" # Inpatient
+      3: "Observation"        # Observation
 
 preprocessing:
-  # Time windows
-  num_windows: 6                  # Number of temporal windows
-  window_size_hours: 2            # Hours per window
-  max_hours: 12                   # Total observation window (num_windows × window_size_hours)
-  max_horizon_hours: 72           # Maximum prediction horizon
-  
-  # Discretisation
-  n_time_bins: 10                 # Number of discrete time bins
-  discretisation_method: quantiles  # 'quantiles' or 'equidistant'
-  
-  # Feature filtering
-  missingness_threshold: 0.01     # Keep features with ≥1% non-missing in training
-  
-  # Label columns
-  event_col: outcome              # Event type column (0, 1, 2, 3 for competing risks)
-  duration_col: ed_los_hours      # Time to event/censoring column
-  
-  # Imputation
+  # --- Parameters from CausalSurv Notebook ---
+  num_windows: 6
+  window_size_hours: 1
+  max_hours: 6                  # Input window T=6 (0-5h)
+  max_horizon_hours: 24         # Label/outcome horizon
+  n_time_bins: 10               # 10 bins for 24h horizon
+  # --- End Notebook Parameters ---
+
+  discretisation_method: quantiles
+  missingness_threshold: 0.01
+
+  # Label columns (set by loader)
+  event_col: event
+  duration_col: duration
+
   imputation:
-    static: mean                  # Strategy for static features: 'mean', 'median', 'mode', 'zero'
-    dynamic: zero                 # Strategy for dynamic features: 'forward', 'zero', 'mean'
-  
-  # Scaling
+    static: mean
+    dynamic: zero
+
   scaling:
-    method: standard              # 'standard' (z-score), 'minmax', or 'none'
-    apply_to: dynamic             # 'dynamic', 'static', 'both', or 'none'
+    method: standard
+    apply_to: dynamic
 
 splits:
   train: 0.7
   val: 0.1
   test: 0.2
   seed: 42
-  split_by: patient               # 'patient' or 'stay' level splitting
+  split_by: patient # Uses 'subject_id' (MRN) from loader
 
-# Modality configuration - set to true/false to enable/disable
+# --- ENABLE ALL MODALITIES ---
 modalities:
-  timeseries: true                # Time-series vitals and labs
-  static: true                    # Demographics and static features
-  icd: false                      # ICD diagnosis codes
-  radiology: false                # Radiology report embeddings
+  timeseries: true
+  static: true
+  icd: true
+  radiology: false
 
 # ICD code processing (if enabled)
 icd_processing:
-  encoding: onehot                # 'onehot', 'embedding', or 'count'
-  top_n_codes: 500                # Number of most frequent codes to keep
-  embedding_dim: 128              # Dimension for learned embeddings
-  use_precomputed: true           # Use pre-computed embeddings if available
+  top_n_codes: 500  # you can set
 
 # Radiology processing (if enabled)
 radiology_processing:
-  use_precomputed: true           # Use pre-computed Clinical-Longformer embeddings
-  embedding_dim: 768              # Expected embedding dimension
-  aggregation: mean               # How to aggregate multiple reports: 'mean', 'max', 'last'
+  bert_batch_size: 32
+  bert_max_length: 1024
 
 output:
-  dir: /path/to/output/mcmed_processed  # UPDATE THIS PATH
+  dir: data/mcmed_processed_final  # UPDATE THIS PATH
   prefix: mcmed
-  save_format: numpy                     # 'numpy' or 'pickle'
-  
+  save_format: numpy
+
   files:
     # Data splits
     x_train: x_train_mcmed.npy
     x_val: x_val_mcmed.npy
     x_test: x_test_mcmed.npy
-    
-    # Labels (for competing risks, events are outcome codes)
+
+    # Labels
     y_train: y_train_surv_mcmed.p
     y_val: y_val_surv_mcmed.p
     durations_test: durations_test_mcmed.npy
-    events_test: events_test_mcmed.npy  # Outcome codes for competing risks
-    
+    events_test: events_test_mcmed.npy
+
     # Auxiliary
-    cuts: cuts_mcmed.npy                 # Time bin boundaries
-    out_features: out_features_mcmed.npy  # Number of time bins
-    n_events: n_events_mcmed.npy         # Number of competing events
+    cuts: cuts_mcmed.npy
+    out_features: out_features_mcmed.npy
+    n_events: n_events_mcmed.npy
     feature_names: feature_names_mcmed.pkl
     modality_info: modality_info_mcmed.pkl
     scaler: scaler_mcmed.pkl
-    
+
     # Masks
     train_mask: x_train_mcmed_mask.npy
     val_mask: x_val_mcmed_mask.npy
     test_mask: x_test_mcmed_mask.npy
-
-# Logging
-logging:
-  level: INFO
-  save_log: true
-  log_file: mcmed_preprocessing.log

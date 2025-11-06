@@ -1,304 +1,422 @@
 import pandas as pd
 import numpy as np
+import gc
+import os  # <-- This fixes the NameError
 from pathlib import Path
-from typing import Dict, Tuple, Optional
-from .base_loader import BaseDataLoader
+from typing import Dict, List, Optional, Tuple
+from data.base_loader import BaseDataLoader
+from tqdm import tqdm
+
+# Imports from your CausalSurv notebook
+import torch
+from torch.cuda.amp import autocast
+from transformers import AutoTokenizer, AutoModel
+from sklearn.model_selection import train_test_split
+
+# Set device for BERT
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+# --- Item ID Maps from Notebook ---
+VITAL_ITEMIDS = {
+    220045: 'Heart_Rate', 220179: 'Systolic_BP', 220180: 'Diastolic_BP',
+    220210: 'Respiratory_Rate', 223761: 'Temperature_F', 220277: 'SpO2',
+    223900: 'GCS_Total', 220050: 'Arterial_BP_Systolic', 220051: 'Arterial_BP_Diastolic',
+}
+LAB_ITEMIDS = {
+    50912: 'Creatinine', 50902: 'Chloride', 50882: 'Bicarbonate', 50893: 'Calcium_Total',
+    51006: 'BUN', 51222: 'Hemoglobin', 51221: 'Hematocrit', 51265: 'Platelet_Count',
+    51301: 'WBC', 50931: 'Glucose', 50983: 'Sodium', 50971: 'Potassium',
+    50960: 'Magnesium', 50813: 'Lactate', 50868: 'Anion_Gap',
+}
 
 
 class MIMICIVDataLoader(BaseDataLoader):
     """
-    Data loader for MIMIC-IV database with multi-modal support.
-    Supports: time-series (vitals/labs), static demographics, ICD codes, and radiology notes.
-    Outcome: In-hospital mortality (single risk).
+    Data loader for MIMIC-IV database.
+
+    This loader is adapted directly from the CausalSurv MIMIC_IV.ipynb notebook.
+    It loads raw CSVs, creates the cohort, and processes all modalities
+    (time-series, static, ICD, radiology) in memory.
     """
 
     def __init__(self, config: Dict):
         super().__init__(config)
         self.files = config['dataset']['files']
         self.modalities_config = config.get('modalities', {})
-        self.admissions_df = None
 
-        self.load_timeseries = self.modalities_config.get('timeseries', True)
-        self.load_static = self.modalities_config.get('static', True)
-        self.load_icd = self.modalities_config.get('icd', False)
-        self.load_radiology = self.modalities_config.get('radiology', False)
+        # Which modalities to load
+        self._load_timeseries = self.modalities_config.get('timeseries', True)
+        self._load_static = self.modalities_config.get('static', True)
+        self._load_icd = self.modalities_config.get('icd', False)
+        self._load_radiology = self.modalities_config.get('radiology', False)
 
-        print(f"\nMIMIC-IV Modalities Configuration:")
-        print(f"  Time-series: {self.load_timeseries}")
-        print(f"  Static: {self.load_static}")
-        print(f"  ICD codes: {self.load_icd}")
-        print(f"  Radiology: {self.load_radiology}")
-        print(f"  Outcome: In-hospital mortality")
+        # Notebook parameters from config
+        self.n_top_codes = config['icd_processing'].get('top_n_codes', 500)
+        self.bert_batch_size = config['radiology_processing'].get('bert_batch_size', 32)
+        self.bert_max_length = config['radiology_processing'].get('bert_max_length', 1024)
 
-    def _get_admissions_df(self) -> pd.DataFrame:
-        """Loads admissions.csv once and caches it."""
-        if self.admissions_df is None:
-            admissions_path = self.base_dir / self.files['admissions']
-            print(f"\n(Loading admissions from: {admissions_path})")
-            self.admissions_df = pd.read_csv(admissions_path)
-            self.admissions_df = self.admissions_df.rename(
-                columns={'hadm_id': 'admission_id'}
-            )
-            self.admissions_df['admittime'] = pd.to_datetime(
-                self.admissions_df['admittime']
-            )
-            self.admissions_df['dischtime'] = pd.to_datetime(
-                self.admissions_df['dischtime']
-            )
-        return self.admissions_df
+        # Parameters from config (matching notebook)
+        self.n_input_steps_hourly = config['preprocessing']['max_hours']  # e.g., 24
+        self.n_windows = config['preprocessing']['num_windows']  # e.g., 6
+        self.window_size_hours = config['preprocessing']['window_size_hours']  # e.g., 4
+        self.max_label_hours = config['preprocessing']['max_horizon_hours']  # e.g., 240
+        self.seed = config['splits']['seed']
+
+        # Caching for raw files
+        self._cohort_df_cache = None
+        self._train_stays_cache = None
+
+        print(f"\nMIMIC-IV Modalities (CausalSurv Logic):")
+        print(f"  Time-series: {self._load_timeseries}")
+        print(f"  Static (Demo/Admin): {self._load_static}")
+        print(f"  ICD codes (Causal): {self._load_icd}")
+        print(f"  Radiology (Live BERT): {self._load_radiology}")
+
+    def _get_cohort_df(self) -> pd.DataFrame:
+        """Loads and caches the core cohort from icustays, patients, admissions."""
+        if self._cohort_df_cache is not None:
+            return self._cohort_df_cache
+
+        print("\nLoading core tables (icustays, patients, admissions)...")
+        icustays = pd.read_csv(os.path.join(self.base_dir, self.files['icustays']),
+                               parse_dates=['intime', 'outtime'])
+        patients = pd.read_csv(os.path.join(self.base_dir, self.files['patients']),
+                               parse_dates=['dod'])
+        admissions = pd.read_csv(os.path.join(self.base_dir, self.files['admissions']),
+                                 parse_dates=['admittime', 'dischtime', 'deathtime'])
+
+        print("Filtering cohort (first stay, adult, >=24h)...")
+        cohort = icustays.merge(patients, on='subject_id', how='left')
+        cohort = cohort.merge(admissions, on=['subject_id', 'hadm_id'], how='left')
+
+        # 1. First ICU stay only
+        cohort = cohort[cohort.groupby('subject_id')['intime'].rank(method='first') == 1]
+        # 2. Adults only
+        cohort = cohort[(cohort['anchor_age'] >= 18)]
+        # 3. Minimum 24-hour stay (to have full data)
+        cohort = cohort[((cohort['outtime'] - cohort['intime']).dt.total_seconds() / 3600 >= 24)]
+
+        print(f"Full cohort size: {len(cohort)} ICU stays")
+        self._cohort_df_cache = cohort
+        return self._cohort_df_cache
+
+    def _get_train_stays(self) -> np.ndarray:
+        """
+        Gets the list of training stay_ids.
+        This is needed for causally-correct ICD code generation.
+        """
+        if self._train_stays_cache is not None:
+            return self._train_stays_cache
+
+        print("\n(Pre-caching train/val/test splits for feature generation...)")
+        cohort = self._get_cohort_df()
+
+        # Create temporary labels just for splitting
+        temp_labels_df = self._create_survival_labels(cohort)
+        temp_labels_df = temp_labels_df.set_index('stay_id')  # Ensure index is stay_id
+
+        # Align labels with cohort stays
+        aligned_labels = temp_labels_df.reindex(cohort['stay_id'])
+
+        train_stays, test_stays_val = train_test_split(
+            cohort['stay_id'].values,
+            test_size=0.2,
+            random_state=self.seed,
+            stratify=aligned_labels['event'].values
+        )
+        # We only need train_stays, so we can stop here.
+        self._train_stays_cache = train_stays
+        print(f"(Cached {len(train_stays)} training stays)")
+        return self._train_stays_cache
+
+    def _create_survival_labels(self, cohort_df: pd.DataFrame) -> pd.DataFrame:
+        """Helper to create labels from the cohort."""
+        cohort_df['true_death_time'] = cohort_df['deathtime'].combine_first(cohort_df['dod'])
+        time_to_death_hours = (cohort_df['true_death_time'] - cohort_df['intime']).dt.total_seconds() / 3600
+
+        is_event = (time_to_death_hours <= self.max_label_hours)
+        duration = np.where(is_event, time_to_death_hours, self.max_label_hours)
+        duration = np.maximum(0, duration)  # Handle rare data errors
+        event = is_event.astype(int)
+
+        return cohort_df[['stay_id']].copy().assign(duration_hours=duration, event=event)
 
     def load_labels(self) -> pd.DataFrame:
-        """Load in-hospital mortality labels."""
-        # Use the helper function to get the cached admissions data
-        admissions = self._get_admissions_df().copy()
-        print(f"\nProcessing labels...")
+        """Loads 10-day (240h) mortality labels."""
+        print("Creating 10-day mortality labels...")
+        cohort = self._get_cohort_df()
+        labels_df = self._create_survival_labels(cohort)
 
-        admissions['los_hours'] = (
-                                          admissions['dischtime'] - admissions['admittime']
-                                  ).dt.total_seconds() / 3600
+        print(f"10-Day Event rate: {labels_df['event'].mean():.1%}")
 
-        admissions['event'] = (admissions['hospital_expire_flag'] == 1).astype(int)
-        admissions['duration'] = admissions['los_hours']
+        # Add subject_id for base_loader splitter
+        labels_df = labels_df.merge(cohort[['stay_id', 'subject_id']], on='stay_id')
+        labels_df = labels_df.rename(columns={
+            'duration_hours': 'duration',
+            'stay_id': 'admission_id'  # Use 'admission_id' as index for pipeline
+        }).set_index('admission_id')
 
-        labels = admissions[['admission_id', 'subject_id', 'duration', 'event']].copy()
-        labels = labels.set_index('admission_id')
-
-        min_hours = self.config['dataset']['cohort']['min_stay_hours']
-        labels = labels[labels['duration'] >= min_hours]
-
-        event_rate = labels['event'].mean() * 100
-        print(f"Loaded {len(labels)} admissions (>={min_hours}h stay)")
-        print(f"In-hospital mortality rate: {event_rate:.1f}%")
-
-        return labels
+        return labels_df[['duration', 'event', 'subject_id']]
 
     def load_static_features(self) -> pd.DataFrame:
-        """Load static demographic and admission features."""
-        if not self.load_static:
-            print("Static features disabled")
+        """Loads static demo/admission features."""
+        if not self._load_static:
             return pd.DataFrame(index=pd.Index([], name='admission_id'))
 
-        patients_path = self.base_dir / self.files['patients']
+        print("Extracting static features...")
+        cohort = self._get_cohort_df()
+        static_df = cohort[
+            ['stay_id', 'anchor_age', 'gender', 'first_careunit', 'admission_type', 'admission_location']
+        ].copy()
 
-        print(f"Loading static features...")
+        static_df = pd.get_dummies(
+            static_df,
+            columns=['gender', 'first_careunit', 'admission_type', 'admission_location'],
+            drop_first=False
+        )
 
-        patients = pd.read_csv(patients_path)
-        # Use the helper function here
-        admissions = self._get_admissions_df().copy()
-
-        static_df = admissions.merge(patients, on='subject_id', how='left')
-
-        # This line is already handled by _get_admissions_df, but it's safe to run again
-        static_df['admittime'] = pd.to_datetime(static_df['admittime'])
-        static_df['anchor_year_group'] = static_df['anchor_year_group'].astype(str)
-
-        admit_year = static_df['admittime'].dt.year
-        anchor_year_start = static_df['anchor_year_group'].str.split(' - ').str[0].astype(int)
-        static_df['age'] = static_df['anchor_age'] + (admit_year - anchor_year_start)
-
-        feature_cols = ['admission_id', 'age', 'gender', 'race', 'admission_type',
-                        'admission_location', 'insurance', 'marital_status']
-        available_cols = [col for col in feature_cols if col in static_df.columns]
-        static_df = static_df[available_cols]
-
-        categorical_cols = ['gender', 'race', 'admission_type', 'admission_location',
-                            'insurance', 'marital_status']
-        for col in categorical_cols:
-            if col in static_df.columns:
-                dummies = pd.get_dummies(static_df[col], prefix=col, drop_first=True)
-                static_df = pd.concat([static_df, dummies], axis=1)
-                static_df = static_df.drop(columns=[col])
-
-        static_df = static_df.set_index('admission_id')
-
-        print(f"Loaded {len(static_df)} admissions with {len(static_df.columns)} static features")
+        static_df = static_df.rename(columns={'stay_id': 'admission_id'}).set_index('admission_id')
+        print(f"Loaded {len(static_df)} stays with {len(static_df.columns)} static features.")
         return static_df
 
     def load_timeseries(self) -> pd.DataFrame:
-        """Load time-series vitals and labs."""
-        if not self.load_timeseries:
-            print("Time-series disabled")
+        """Loads and processes chartevents and labevents."""
+        if not self._load_timeseries:
             return pd.DataFrame()
 
-        cohort_ids = self.cohort_df.index.unique()
+        cohort = self._get_cohort_df()
+
+        print("Loading chartevents (vitals)...")
+        chart_chunks = []
+        for chunk in pd.read_csv(os.path.join(self.base_dir, self.files['timeseries_vitals']),
+                                 usecols=['stay_id', 'charttime', 'itemid', 'valuenum'],
+                                 parse_dates=['charttime'],
+                                 chunksize=10_000_000):
+            chunk = chunk[chunk['stay_id'].isin(cohort['stay_id']) & chunk['itemid'].isin(VITAL_ITEMIDS.keys())]
+            chart_chunks.append(chunk)
+        chartevents = pd.concat(chart_chunks, ignore_index=True)
+        chartevents['feature'] = chartevents['itemid'].map(VITAL_ITEMIDS)
+        chartevents = chartevents.merge(cohort[['stay_id', 'intime']], on='stay_id', how='left')
+
+        print("Loading labevents (labs)...")
+        lab_chunks = []
+        for chunk in pd.read_csv(os.path.join(self.base_dir, self.files['timeseries_lab']),
+                                 usecols=['subject_id', 'charttime', 'itemid', 'valuenum'],
+                                 parse_dates=['charttime'],
+                                 chunksize=10_000_000):
+            chunk = chunk[chunk['itemid'].isin(LAB_ITEMIDS.keys())]
+            lab_chunks.append(chunk)
+        labevents = pd.concat(lab_chunks, ignore_index=True)
+        labevents['feature'] = labevents['itemid'].map(LAB_ITEMIDS)
+        labevents = labevents.merge(cohort[['subject_id', 'stay_id', 'intime']], on='subject_id', how='left')
+
+        # Combine
+        timeseries_raw = pd.concat([
+            chartevents[['stay_id', 'charttime', 'feature', 'valuenum', 'intime']],
+            labevents[['stay_id', 'charttime', 'feature', 'valuenum', 'intime']]
+        ], ignore_index=True)
+        timeseries_raw = timeseries_raw.dropna(subset=['stay_id'])  # Drop labs that didn't merge
+        timeseries_raw['stay_id'] = timeseries_raw['stay_id'].astype(int)
+
+        print("Filtering and binning time-series data...")
+        timeseries_raw['hours_since_admit'] = (
+                (timeseries_raw['charttime'] - timeseries_raw['intime']).dt.total_seconds() / 3600
+        )
+        timeseries_raw = timeseries_raw[
+            (timeseries_raw['hours_since_admit'] >= 0) &
+            (timeseries_raw['hours_since_admit'] < self.n_input_steps_hourly)  # < 24
+            ]
+
+        # Create hourly time index (0-23)
+        timeseries_raw['hour_bin'] = (timeseries_raw['hours_since_admit']).astype(int)
+
+        # Pivot
+        ts_wide = timeseries_raw.pivot_table(
+            index=['stay_id', 'hour_bin'],
+            columns='feature',
+            values='valuenum',
+            aggfunc='mean'
+        )
+
+        # Resample to ensure all 24 hours exist
+        all_hours = pd.MultiIndex.from_product([
+            cohort['stay_id'].unique(),
+            range(self.n_input_steps_hourly)
+        ], names=['stay_id', 'hour_bin'])
+        ts_hourly = ts_wide.reindex(all_hours)
+
+        # Aggregate into 6 windows (4 hours each)
+        ts_hourly['window'] = ts_hourly.index.get_level_values('hour_bin') // self.window_size_hours
+        ts_windowed = ts_hourly.groupby(['stay_id', 'window']).mean()
+
+        # Ensure all 6 windows exist
+        all_windows = pd.MultiIndex.from_product([
+            cohort['stay_id'].unique(),
+            range(self.n_windows)
+        ], names=['stay_id', 'window'])
+        ts_windowed = ts_windowed.reindex(all_windows)
+
+        # Rename index for pipeline compatibility
+        ts_windowed = ts_windowed.rename_axis(['admission_id', 'time_hours'])
+
+        print(f"Final dynamic dataframe shape: {ts_windowed.shape}")
+
+        # Missingness filtering (as in original repo logic)
         train_ids = self.create_splits()['train']
-        max_hours = self.config['preprocessing']['max_hours']
         missingness_threshold = self.config['preprocessing']['missingness_threshold']
-
-        chartevents_path = self.base_dir / self.files.get('chartevents')
-        labevents_path = self.base_dir / self.files.get('labevents')
-
-        # Get admissions data ONCE using the helper function
-        admissions = self._get_admissions_df()
-        # We only need these two columns for merging
-        admissions_time = admissions[['admission_id', 'admittime']]
-
-        ts_dfs = []
-
-        if chartevents_path and chartevents_path.exists():
-            print(f"\nLoading chartevents from: {chartevents_path}")
-            chartevents = pd.read_csv(chartevents_path)
-            chartevents = chartevents.rename(columns={'hadm_id': 'admission_id'})
-            chartevents = chartevents[chartevents['admission_id'].isin(cohort_ids)]
-
-            chartevents['charttime'] = pd.to_datetime(chartevents['charttime'])
-
-            # Use the cached admissions_time dataframe
-            chartevents = chartevents.merge(
-                admissions_time,
-                on='admission_id'
-            )
-            chartevents['time_hours'] = (
-                                                chartevents['charttime'] - chartevents['admittime']
-                                        ).dt.total_seconds() / 3600
-
-            chartevents = chartevents[
-                (chartevents['time_hours'] >= 0) &
-                (chartevents['time_hours'] < max_hours)
-                ]
-
-            vital_features = ['heart_rate', 'sbp', 'dbp', 'mbp', 'resp_rate',
-                              'temperature', 'spo2', 'glucose']
-            available_vitals = [col for col in vital_features if col in chartevents.columns]
-
-            chartevents = chartevents[['admission_id', 'time_hours'] + available_vitals]
-            chartevents = chartevents.set_index(['admission_id', 'time_hours'])
-            ts_dfs.append(chartevents)
-
-            print(f"Loaded {len(chartevents)} vital measurements")
-
-        if labevents_path and labevents_path.exists():
-            print(f"Loading labevents from: {labevents_path}")
-            labevents = pd.read_csv(labevents_path)
-            labevents = labevents.rename(columns={'hadm_id': 'admission_id'})
-            labevents = labevents[labevents['admission_id'].isin(cohort_ids)]
-
-            labevents['charttime'] = pd.to_datetime(labevents['charttime'])
-
-            # Use the cached admissions_time dataframe again
-            labevents = labevents.merge(
-                admissions_time,
-                on='admission_id'
-            )
-            labevents['time_hours'] = (
-                                              labevents['charttime'] - labevents['admittime']
-                                      ).dt.total_seconds() / 3600
-
-            labevents = labevents[
-                (labevents['time_hours'] >= 0) &
-                (labevents['time_hours'] < max_hours)
-                ]
-
-            lab_features = ['creatinine', 'potassium', 'sodium', 'chloride', 'bicarbonate',
-                            'bun', 'glucose', 'hematocrit', 'wbc', 'platelet']
-            available_labs = [col for col in lab_features if col in labevents.columns]
-
-            labevents = labevents[['admission_id', 'time_hours'] + available_labs]
-            labevents = labevents.set_index(['admission_id', 'time_hours'])
-            ts_dfs.append(labevents)
-
-            print(f"Loaded {len(labevents)} lab measurements")
-
-        if not ts_dfs:
-            print("Warning: No time-series data found")
-            return pd.DataFrame()
-
-        ts_combined = pd.concat(ts_dfs, axis=1)
-        ts_combined = ts_combined.groupby(level=[0, 1]).mean()
-
-        print(f"Combined to {len(ts_combined.columns)} raw dynamic features")
-
-        print(f"Filtering by missingness (threshold: {missingness_threshold})...")
-        ts_train = ts_combined[ts_combined.index.get_level_values('admission_id').isin(train_ids)]
+        print(f"Filtering features by missingness (threshold: {missingness_threshold})...")
+        ts_train = ts_windowed[ts_windowed.index.get_level_values('admission_id').isin(train_ids)]
         missingness = ts_train.notna().mean()
         cols_to_keep = missingness[missingness >= missingness_threshold].index
-        ts_combined = ts_combined[cols_to_keep]
-        ts_combined = ts_combined.sort_index()
+        ts_windowed = ts_windowed[cols_to_keep]
+        ts_windowed = ts_windowed.sort_index()
 
-        print(f"Kept {len(cols_to_keep)} dynamic features (>={missingness_threshold * 100}% present in training)")
-        return ts_combined
+        print(f"Kept {len(cols_to_keep)} dynamic features (≥{missingness_threshold * 100}% present in training)")
+        return ts_windowed
 
     def load_icd_codes(self) -> Tuple[pd.DataFrame, Optional[np.ndarray]]:
-        """Load ICD diagnosis codes."""
-        if not self.load_icd:
-            print("ICD codes disabled")
+        """Loads and processes diagnoses_icd.csv into one-hot vectors."""
+        if not self._load_icd:
             return pd.DataFrame(index=pd.Index([], name='admission_id')), None
 
-        diagnoses_path = self.base_dir / self.files.get('diagnoses_icd')
-        if not diagnoses_path or not diagnoses_path.exists():
-            print("Warning: ICD codes enabled but file not found")
-            return pd.DataFrame(index=pd.Index([], name='admission_id')), None
+        cohort = self._get_cohort_df()
+        train_stays = self._get_train_stays()  # Get cached train stay_ids
 
-        print(f"\nLoading ICD codes from: {diagnoses_path}")
+        print("\nExtracting causally-correct ICD codes...")
+        diagnoses = pd.read_csv(os.path.join(self.base_dir, self.files['icd_codes']))
 
-        diagnoses = pd.read_csv(diagnoses_path)
-        diagnoses = diagnoses.rename(columns={'hadm_id': 'admission_id'})
+        # Use cohort-loaded admissions data
+        admissions = self._get_cohort_df()[['hadm_id', 'admittime']].drop_duplicates()
+        diagnoses = diagnoses.merge(admissions, on='hadm_id', how='left')
 
+        diagnoses_merged = diagnoses.merge(
+            cohort[['stay_id', 'subject_id', 'intime', 'hadm_id']].rename(
+                columns={'hadm_id': 'current_hadm_id', 'intime': 'current_intime'}
+            ),
+            on='subject_id'
+        )
+
+        # CAUSAL FILTER: Only diagnoses from BEFORE current ICU admission
+        past_diagnoses = diagnoses_merged[
+            diagnoses_merged['admittime'] < diagnoses_merged['current_intime']
+            ]
+
+        # Find top N most frequent codes in training set
+        train_diagnoses = past_diagnoses[past_diagnoses['stay_id'].isin(train_stays)]
+        top_codes = train_diagnoses['icd_code'].value_counts().head(self.n_top_codes).index.tolist()
+
+        past_diagnoses = past_diagnoses[past_diagnoses['icd_code'].isin(top_codes)]
+        icd_matrix = past_diagnoses.groupby(['stay_id', 'icd_code']).size().unstack(fill_value=0)
+        icd_matrix = (icd_matrix > 0).astype(int)
+
+        icd_matrix = icd_matrix.reindex(cohort['stay_id'], fill_value=0)
+        icd_matrix = icd_matrix.reindex(columns=top_codes, fill_value=0)
+        icd_matrix.columns = [f'ICD_{code}' for code in icd_matrix.columns]
+
+        icd_df = icd_matrix.rename_axis(index='admission_id')
+
+        # Filter to cohort
         cohort_ids = self.cohort_df.index.unique()
-        diagnoses = diagnoses[diagnoses['admission_id'].isin(cohort_ids)]
+        icd_df = icd_df.loc[icd_df.index.isin(cohort_ids)]
 
-        icd_config = self.config.get('icd_processing', {})
-        top_n = icd_config.get('top_n_codes', 500)
-
-        code_counts = diagnoses['icd_code'].value_counts()
-        top_codes = code_counts.head(top_n).index
-
-        diagnoses = diagnoses[diagnoses['icd_code'].isin(top_codes)]
-
-        icd_df = pd.crosstab(diagnoses['admission_id'], diagnoses['icd_code'])
-        icd_df = (icd_df > 0).astype(int)
-
-        print(f"Loaded ICD codes for {len(icd_df)} admissions")
-        print(f"Top {top_n} codes encoded")
-
-        return icd_df, None
+        print(f"Created ({len(icd_df)}, {len(icd_df.columns)}) visit-ICD matrix.")
+        return icd_df, None  # Return None for embeddings
 
     def load_radiology_reports(self) -> Tuple[pd.DataFrame, Optional[np.ndarray]]:
-        """Load radiology report embeddings or text."""
-        if not self.load_radiology:
-            print("Radiology reports disabled")
+        """Loads radiology.csv and runs Clinical-Longformer."""
+        if not self._load_radiology:
             return pd.DataFrame(index=pd.Index([], name='admission_id')), None
 
-        radiology_path = self.base_dir / self.files.get('radiology_embeddings')
-        if radiology_path and radiology_path.exists():
-            print(f"\nLoading radiology embeddings from: {radiology_path}")
+        cohort = self._get_cohort_df()
+        cohort_ids = self.cohort_df.index.unique()
 
-            embeddings_df = pd.read_csv(radiology_path)
-            embeddings_df = embeddings_df.rename(columns={'hadm_id': 'admission_id'})
-            embeddings_df = embeddings_df.set_index('admission_id')
+        rad_path = self.base_dir / self.files['radiology_embeddings']  # Using this key for 'radiology.csv'
+        print(f"\nExtracting {self.files['radiology_embeddings']} (Radiology Reports)...")
+        radiology = pd.read_csv(os.path.join(self.base_dir, rad_path), parse_dates=['charttime'])
 
-            cohort_ids = self.cohort_df.index.unique()
-            embeddings_df = embeddings_df[embeddings_df.index.isin(cohort_ids)]
+        radiology = radiology.merge(
+            cohort[['stay_id', 'subject_id', 'hadm_id', 'intime']],
+            on=['subject_id', 'hadm_id'],
+            how='inner'
+        )
 
-            print(f"Loaded radiology embeddings for {len(embeddings_df)} admissions")
-            print(f"Embedding dimension: {len(embeddings_df.columns)}")
+        # CAUSAL FILTER: Only reports from within the 24-hour input window
+        radiology['hours_since_admit'] = (
+                (radiology['charttime'] - radiology['intime']).dt.total_seconds() / 3600
+        )
+        radiology = radiology[
+            (radiology['hours_since_admit'] >= 0) &
+            (radiology['hours_since_admit'] < self.n_input_steps_hourly)
+            ]
 
-            return embeddings_df, embeddings_df.values
+        radiology = radiology.dropna(subset=['text'])
 
-        print("Warning: Radiology enabled but no embeddings file found")
-        return pd.DataFrame(index=pd.Index([], name='admission_id')), None
+        if len(radiology) == 0:
+            print("No valid radiology reports found for this cohort.")
+            return pd.DataFrame(index=pd.Index([], name='admission_id')), None
+
+        print("Loading Clinical-Longformer (yikuan8/Clinical-Longformer)...")
+        tokenizer = AutoTokenizer.from_pretrained("yikuan8/Clinical-Longformer")
+        model = AutoModel.from_pretrained("yikuan8/Clinical-Longformer").to(DEVICE)
+        model.eval()
+
+        embeddings_list = []
+        print(f"Embedding {len(radiology)} reports (this will take a long time)...")
+        with torch.no_grad():
+            for i in tqdm(range(0, len(radiology), self.bert_batch_size), desc="Embedding Reports"):
+                batch_texts = radiology['text'].iloc[i:i + self.bert_batch_size].tolist()
+                inputs = tokenizer(batch_texts, return_tensors='pt', truncation=True,
+                                   padding=True, max_length=self.bert_max_length).to(DEVICE)
+
+                with autocast():
+                    outputs = model(**inputs)
+                    batch_embeddings = outputs.last_hidden_state.mean(dim=1)
+
+                # Store embeddings and stay_id
+                stay_ids_batch = radiology['stay_id'].iloc[i:i + self.bert_batch_size].values
+                for stay_id, emb in zip(stay_ids_batch, batch_embeddings.cpu().numpy()):
+                    embeddings_list.append({'stay_id': stay_id, 'embedding': emb.flatten()})
+
+        del model, tokenizer, inputs, outputs
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        if not embeddings_list:
+            print("No embeddings generated.")
+            return pd.DataFrame(index=pd.Index([], name='admission_id')), None
+
+        # Average embeddings per stay_id
+        print("Averaging embeddings per visit (stay_id)...")
+        embeddings_df = pd.DataFrame(embeddings_list)
+        embeddings_grouped = embeddings_df.groupby('stay_id')['embedding'].apply(
+            lambda x: np.mean(np.vstack(x), axis=0)
+        ).reset_index()
+
+        embedding_matrix = np.vstack(embeddings_grouped['embedding'].values)
+        embedding_cols = [f'Radio_{i}' for i in range(embedding_matrix.shape[1])]
+
+        radio_df = pd.DataFrame(embedding_matrix, columns=embedding_cols)
+        radio_df['stay_id'] = embeddings_grouped['stay_id'].values
+
+        radio_df = radio_df.set_index('stay_id').rename_axis('admission_id')
+
+        # Reindex to include all visits in cohort (with NaNs for those w/o reports)
+        radio_df = radio_df.reindex(cohort_ids.rename('admission_id'))
+
+        print(f"Created ({len(radio_df)}, {radio_df.shape[1]}) visit-Report matrix.")
+
+        # The pipeline expects (reports_df, embeddings_array)
+        # We return (embeddings_df, None) and the pipeline will handle it.
+        return radio_df, None
 
     def apply_cohort_criteria(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Apply MIMIC-IV specific cohort criteria."""
-        initial_n = len(df)
+        """Apply cohort criteria."""
+        # All filtering was done in _get_cohort_df().
+        # 'subject_id' was added in load_labels() and merged in base_loader.build_cohort()
 
-        max_age = self.config['dataset']['cohort'].get('max_age')
-        if max_age and 'age' in df.columns:
-            df = df[df['age'] <= max_age]
-            print(f"  Age filter (<={max_age}): {len(df)} remains")
+        # Just need to check that it's present for the splitter
+        if 'subject_id' not in df.columns:
+            raise ValueError("Critical Error: 'subject_id' was not found in cohort_df before splitting.")
 
-        if 'age' in df.columns:
-            df = df[df['age'] >= 18]
-            print(f"  Adult filter (>=18): {len(df)} remains")
-
-        print(f"Cohort criteria applied: {initial_n} -> {len(df)} admissions")
+        print(f"Cohort criteria applied: {len(df)} stays remaining.")
         return df
-
-    def get_modality_info(self) -> Dict:
-        """Return information about loaded modalities."""
-        return {
-            'timeseries': self.load_timeseries,
-            'static': self.load_static,
-            'icd': self.load_icd,
-            'radiology': self.load_radiology,
-        }
