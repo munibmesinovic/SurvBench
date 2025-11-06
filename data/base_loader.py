@@ -55,24 +55,45 @@ class BaseDataLoader(ABC):
         if self.cohort_df is None:
             raise ValueError("Must build cohort before creating splits")
 
+        # Check for the patient identifier column
+        if 'subject_id' not in self.cohort_df.columns:
+            raise ValueError(
+                "Data splitting requires a 'subject_id' column in the cohort_df. "
+                "Please ensure your data loader (e.g., MIMICIVDataLoader) "
+                "and preparation scripts (e.g., prepare_mcmed_data.py) "
+                "load and retain 'subject_id'."
+            )
+
         split_config = self.config['splits']
         train_size = split_config['train']
         val_size = split_config['val']
         test_size = split_config['test']
 
-        unique_patients = self.cohort_df.index.unique()
+        # Split on the unique patient (subject_id)
+        unique_patient_ids = self.cohort_df['subject_id'].unique()
 
-        train_ids, temp_ids = train_test_split(
-            unique_patients,
+        train_patient_ids, temp_patient_ids = train_test_split(
+            unique_patient_ids,
             test_size=(val_size + test_size),
             random_state=self.seed
         )
 
-        val_ids, test_ids = train_test_split(
-            temp_ids,
+        val_patient_ids, test_patient_ids = train_test_split(
+            temp_patient_ids,
             test_size=(test_size / (val_size + test_size)),
             random_state=self.seed
         )
+
+        # Get the dataframe indices (stay_id/admission_id) for each split
+        train_ids = self.cohort_df[
+            self.cohort_df['subject_id'].isin(train_patient_ids)
+        ].index
+        val_ids = self.cohort_df[
+            self.cohort_df['subject_id'].isin(val_patient_ids)
+        ].index
+        test_ids = self.cohort_df[
+            self.cohort_df['subject_id'].isin(test_patient_ids)
+        ].index
 
         splits = {
             'train': train_ids,
@@ -80,9 +101,10 @@ class BaseDataLoader(ABC):
             'test': test_ids
         }
 
-        print(f"\\n--- Data Splits ---")
-        print(f"Train: {len(train_ids)} ({train_size * 100:.0f}%)")
-        print(f"Val:   {len(val_ids)} ({val_size * 100:.0f}%)")
-        print(f"Test:  {len(test_ids)} ({test_size * 100:.0f}%)")
+        print(f"\n--- Data Splits (by 'subject_id') ---")
+        print(f"Total unique patients: {len(unique_patient_ids)}")
+        print(f"Train patients: {len(train_patient_ids)} ({len(train_ids)} stays/admissions)")
+        print(f"Val patients:   {len(val_patient_ids)} ({len(val_ids)} stays/admissions)")
+        print(f"Test patients:  {len(test_patient_ids)} ({len(test_ids)} stays/admissions)")
 
         return splits

@@ -124,8 +124,31 @@ class PreprocessingPipeline:
         # 2. Static (if separate from time-series)
         elif self.modalities.get('static', False):
             print("\n  → Processing static-only modality...")
-            # Create static-only arrays (no temporal dimension needed here as handled by aggregator)
-            pass
+            # This path is for when timeseries=false but static=true
+            # We load static features and format as (N, F_static)
+            if self.loader.static_df is None:
+                self.loader.static_df = self.loader.load_static_features()
+
+            static_cols = list(self.loader.static_df.columns)
+            self.feature_structure = {
+                'num_dynamic': 0,
+                'num_static': len(static_cols),
+                'num_total': len(static_cols),
+                'dynamic_names': [],
+                'static_names': static_cols,
+                'all_names': static_cols,
+                'dynamic_indices': [],
+                'static_indices': list(range(len(static_cols)))
+            }
+
+            self.split_data['static'] = {}
+            for split, cohort in self.cohort_dfs.items():
+                split_static = self.loader.static_df.loc[
+                    self.loader.static_df.index.isin(cohort.index)
+                ]
+                split_static = split_static.reindex(cohort.index)
+                self.split_data['static'][split] = split_static.values.astype(np.float32)
+                print(f"    {split} static shape: {self.split_data['static'][split].shape}")
 
         # 3. ICD codes
         if self.modalities.get('icd', False):
@@ -226,8 +249,17 @@ class PreprocessingPipeline:
                         data[:, :, col_idx] = col_data
 
                 # Impute dynamic features
-                if dynamic_method == 'zero':
-                    data = np.nan_to_num(data, nan=0.0)
+                # Note: Only 'zero' imputation is currently supported for dynamic.
+                if dynamic_method != 'zero':
+                    print(
+                        f"Warning: Dynamic imputation method '{dynamic_method}' "
+                        "not implemented. Defaulting to 'zero'."
+                    )
+
+                # Apply zero imputation
+                dynamic_part = data[:, :, dynamic_indices]
+                dynamic_part = np.nan_to_num(dynamic_part, nan=0.0)
+                data[:, :, dynamic_indices] = dynamic_part
 
                 self.split_data['timeseries'][split] = data
 
@@ -308,7 +340,15 @@ class PreprocessingPipeline:
 
             # Save masks
             mask_key = 'combined' if 'combined' in self.split_masks else 'timeseries'
-            mask_path = str(x_path).replace('.npy', '_mask.npy')
+            # Use mask filename from config, e.g., 'train_mask'
+            mask_file_key = f"{split}_mask"
+            if mask_file_key in output_files:
+                mask_path = self.output_dir / output_files[mask_file_key]
+            else:
+                # Fallback for configs without explicit mask paths (like eICU)
+                mask_path = str(x_path).replace('.npy', '_mask.npy')
+                print(f"  Warning: '{mask_file_key}' not in config. "
+                      f"Saving mask to {Path(mask_path).name}")
             np.save(mask_path, self.split_masks[mask_key][split])
             print(f"  Saved {Path(mask_path).name}")
 

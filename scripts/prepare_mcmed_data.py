@@ -122,49 +122,72 @@ def prepare_mcmed_static(
 def prepare_mcmed_timeseries(
         vitals_df: pd.DataFrame,
         labs_df: pd.DataFrame,
+        edstays_df: pd.DataFrame,  # <-- ADDED THIS ARGUMENT
         output_path: Path
 ) -> pd.DataFrame:
     """
     Prepare time-series vitals and labs.
-
     Expected columns:
     - vitals_df: stay_id, charttime, hr, sbp, dbp, temp, spo2, rr, ...
     - labs_df: stay_id, charttime, lab values, ...
+    - edstays_df: stay_id, intime
     """
     print("\n[3/5] Preparing time-series...")
 
-    # Convert charttime to hours from ED admission
-    for df in [vitals_df, labs_df]:
-        if 'charttime' in df.columns:
-            df['charttime'] = pd.to_datetime(df['charttime'])
+    # Get intime for all stays
+    edstays_df['intime'] = pd.to_datetime(edstays_df['intime'])
+    stay_times = edstays_df[['stay_id', 'intime']].drop_duplicates()
+
+    ts_dfs = []
+
+    # Process Vitals
+    if 'charttime' in vitals_df.columns:
+        vitals_df['charttime'] = pd.to_datetime(vitals_df['charttime'])
+        vitals_df = vitals_df.merge(stay_times, on='stay_id', how='left')
+        vitals_df['time_hours'] = (
+                                          vitals_df['charttime'] - vitals_df['intime']
+                                  ).dt.total_seconds() / 3600
+
+        vital_cols = [col for col in vitals_df.columns
+                      if col not in ['stay_id', 'charttime', 'intime', 'subject_id', 'time_hours']]
+        vitals_df = vitals_df[['stay_id', 'time_hours'] + vital_cols]
+        ts_dfs.append(vitals_df)
+        print(f"  Processed {len(vitals_df)} vital measurements.")
+
+    # Process Labs
+    if 'charttime' in labs_df.columns:
+        labs_df['charttime'] = pd.to_datetime(labs_df['charttime'])
+        labs_df = labs_df.merge(stay_times, on='stay_id', how='left')
+        labs_df['time_hours'] = (
+                                        labs_df['charttime'] - labs_df['intime']
+                                ).dt.total_seconds() / 3600
+
+        lab_cols = [col for col in labs_df.columns
+                    if col not in ['stay_id', 'charttime', 'intime', 'subject_id', 'time_hours']]
+        labs_df = labs_df[['stay_id', 'time_hours'] + lab_cols]
+        ts_dfs.append(labs_df)
+        print(f"  Processed {len(labs_df)} lab measurements.")
 
     # Merge vitals and labs
-    ts = pd.concat([vitals_df, labs_df], axis=0, ignore_index=True)
+    if not ts_dfs:
+        print("  Warning: No time-series data found.")
+        return pd.DataFrame()
 
-    # Calculate time_hours (needs reference time per stay)
-    # This is a simplified version - adjust based on your data structure
-    if 'intime' in ts.columns:
-        ts['intime'] = pd.to_datetime(ts['intime'])
-        ts['time_hours'] = (ts['charttime'] - ts['intime']).dt.total_seconds() / 3600
-    else:
-        # If no reference time, group by stay and calculate relative time
-        def calc_relative_time(group):
-            group = group.sort_values('charttime')
-            min_time = group['charttime'].min()
-            group['time_hours'] = (group['charttime'] - min_time).dt.total_seconds() / 3600
-            return group
+    ts = pd.concat(ts_dfs, axis=0, ignore_index=True)
 
-        ts = ts.groupby('stay_id', group_keys=False).apply(calc_relative_time)
+    # Pivot if data is in long format (e.g., itemid, value)
+    # This example assumes data is already in wide format (one col per feature)
+    # If not, a pivot or groupby.pivot is needed here.
 
-    # Keep only relevant columns
-    value_cols = [col for col in ts.columns
-                  if col not in ['stay_id', 'charttime', 'time_hours', 'intime', 'subject_id']]
+    # Group by stay_id and time_hours if labs/vitals have same-time measurements
+    ts = ts.groupby(['stay_id', 'time_hours']).mean().reset_index()
 
-    ts = ts[['stay_id', 'time_hours'] + value_cols]
     ts = ts.sort_values(['stay_id', 'time_hours'])
 
-    # Remove negative times
+    # Remove negative times (measurements before admission)
     ts = ts[ts['time_hours'] >= 0]
+
+    value_cols = [col for col in ts.columns if col not in ['stay_id', 'time_hours']]
 
     # Save
     ts.to_csv(output_path / 'timeseries_vitals.csv', index=False)
@@ -281,7 +304,7 @@ def main():
     # Prepare each component
     labels = prepare_mcmed_labels(edstays, outcomes, output_path)
     static = prepare_mcmed_static(patients, edstays, output_path)
-    timeseries = prepare_mcmed_timeseries(vitals, labs, output_path)
+    timeseries = prepare_mcmed_timeseries(vitals, labs, edstays, output_path)
     icd = prepare_mcmed_icd(diagnoses, args.top_n_icd, output_path)
 
     # Radiology (if available)

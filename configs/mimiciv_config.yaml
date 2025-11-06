@@ -75,7 +75,6 @@ output:
     events_test: events_test_mimiciv.npy
     cuts: cuts_mimiciv.npy
     out_features: out_features_mimiciv.npy
-    n_events: n_events_mimiciv.npy
     feature_names: feature_names.pkl
     modality_info: modality_info.pkl
     scaler: scaler.pkl

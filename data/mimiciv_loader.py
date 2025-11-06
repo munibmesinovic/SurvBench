@@ -16,6 +16,7 @@ class MIMICIVDataLoader(BaseDataLoader):
         super().__init__(config)
         self.files = config['dataset']['files']
         self.modalities_config = config.get('modalities', {})
+        self.admissions_df = None
 
         self.load_timeseries = self.modalities_config.get('timeseries', True)
         self.load_static = self.modalities_config.get('static', True)
@@ -29,16 +30,28 @@ class MIMICIVDataLoader(BaseDataLoader):
         print(f"  Radiology: {self.load_radiology}")
         print(f"  Outcome: In-hospital mortality")
 
+    def _get_admissions_df(self) -> pd.DataFrame:
+        """Loads admissions.csv once and caches it."""
+        if self.admissions_df is None:
+            admissions_path = self.base_dir / self.files['admissions']
+            print(f"\n(Loading admissions from: {admissions_path})")
+            self.admissions_df = pd.read_csv(admissions_path)
+            self.admissions_df = self.admissions_df.rename(
+                columns={'hadm_id': 'admission_id'}
+            )
+            self.admissions_df['admittime'] = pd.to_datetime(
+                self.admissions_df['admittime']
+            )
+            self.admissions_df['dischtime'] = pd.to_datetime(
+                self.admissions_df['dischtime']
+            )
+        return self.admissions_df
+
     def load_labels(self) -> pd.DataFrame:
         """Load in-hospital mortality labels."""
-        admissions_path = self.base_dir / self.files['admissions']
-        print(f"\nLoading admissions from: {admissions_path}")
-
-        admissions = pd.read_csv(admissions_path)
-        admissions = admissions.rename(columns={'hadm_id': 'admission_id'})
-
-        admissions['admittime'] = pd.to_datetime(admissions['admittime'])
-        admissions['dischtime'] = pd.to_datetime(admissions['dischtime'])
+        # Use the helper function to get the cached admissions data
+        admissions = self._get_admissions_df().copy()
+        print(f"\nProcessing labels...")
 
         admissions['los_hours'] = (
                                           admissions['dischtime'] - admissions['admittime']
@@ -66,16 +79,16 @@ class MIMICIVDataLoader(BaseDataLoader):
             return pd.DataFrame(index=pd.Index([], name='admission_id'))
 
         patients_path = self.base_dir / self.files['patients']
-        admissions_path = self.base_dir / self.files['admissions']
 
         print(f"Loading static features...")
 
         patients = pd.read_csv(patients_path)
-        admissions = pd.read_csv(admissions_path)
-        admissions = admissions.rename(columns={'hadm_id': 'admission_id'})
+        # Use the helper function here
+        admissions = self._get_admissions_df().copy()
 
         static_df = admissions.merge(patients, on='subject_id', how='left')
 
+        # This line is already handled by _get_admissions_df, but it's safe to run again
         static_df['admittime'] = pd.to_datetime(static_df['admittime'])
         static_df['anchor_year_group'] = static_df['anchor_year_group'].astype(str)
 
@@ -115,6 +128,11 @@ class MIMICIVDataLoader(BaseDataLoader):
         chartevents_path = self.base_dir / self.files.get('chartevents')
         labevents_path = self.base_dir / self.files.get('labevents')
 
+        # Get admissions data ONCE using the helper function
+        admissions = self._get_admissions_df()
+        # We only need these two columns for merging
+        admissions_time = admissions[['admission_id', 'admittime']]
+
         ts_dfs = []
 
         if chartevents_path and chartevents_path.exists():
@@ -124,12 +142,10 @@ class MIMICIVDataLoader(BaseDataLoader):
             chartevents = chartevents[chartevents['admission_id'].isin(cohort_ids)]
 
             chartevents['charttime'] = pd.to_datetime(chartevents['charttime'])
-            admissions = pd.read_csv(self.base_dir / self.files['admissions'])
-            admissions = admissions.rename(columns={'hadm_id': 'admission_id'})
-            admissions['admittime'] = pd.to_datetime(admissions['admittime'])
 
+            # Use the cached admissions_time dataframe
             chartevents = chartevents.merge(
-                admissions[['admission_id', 'admittime']],
+                admissions_time,
                 on='admission_id'
             )
             chartevents['time_hours'] = (
@@ -158,12 +174,10 @@ class MIMICIVDataLoader(BaseDataLoader):
             labevents = labevents[labevents['admission_id'].isin(cohort_ids)]
 
             labevents['charttime'] = pd.to_datetime(labevents['charttime'])
-            admissions = pd.read_csv(self.base_dir / self.files['admissions'])
-            admissions = admissions.rename(columns={'hadm_id': 'admission_id'})
-            admissions['admittime'] = pd.to_datetime(admissions['admittime'])
 
+            # Use the cached admissions_time dataframe again
             labevents = labevents.merge(
-                admissions[['admission_id', 'admittime']],
+                admissions_time,
                 on='admission_id'
             )
             labevents['time_hours'] = (
