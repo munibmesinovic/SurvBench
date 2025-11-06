@@ -1,0 +1,89 @@
+# MIMIC-IV Dataset Configuration
+# Outcome: In-hospital mortality (single risk)
+
+dataset:
+  name: mimiciv
+  base_dir: /path/to/mimiciv/data  # UPDATE THIS PATH
+  
+  files:
+    admissions: hosp/admissions.csv
+    patients: hosp/patients.csv
+    chartevents: icu/chartevents_processed.csv
+    labevents: hosp/labevents_processed.csv
+    diagnoses_icd: hosp/diagnoses_icd.csv
+    radiology_embeddings: hosp/radiology_embeddings.csv  # Optional
+  
+  cohort:
+    min_stay_hours: 24
+    max_age: 89
+
+preprocessing:
+  num_windows: 6
+  window_size_hours: 4
+  max_hours: 24
+  max_horizon_hours: 720
+  n_time_bins: 10
+  discretisation_method: quantiles
+  missingness_threshold: 0.01
+  event_col: event
+  duration_col: duration
+  
+  imputation:
+    static: mean
+    dynamic: zero
+  
+  scaling:
+    method: standard
+    apply_to: dynamic
+
+splits:
+  train: 0.7
+  val: 0.1
+  test: 0.2
+  seed: 42
+  split_by: patient
+
+modalities:
+  timeseries: true
+  static: true
+  icd: false
+  radiology: false
+
+icd_processing:
+  encoding: onehot
+  top_n_codes: 500
+  embedding_dim: 128
+  use_precomputed: false
+
+radiology_processing:
+  use_precomputed: true
+  embedding_dim: 768
+  aggregation: mean
+
+output:
+  dir: /path/to/output/mimiciv_processed  # UPDATE THIS PATH
+  prefix: mimiciv
+  save_format: numpy
+  
+  files:
+    x_train: x_train_mimiciv.npy
+    x_val: x_val_mimiciv.npy
+    x_test: x_test_mimiciv.npy
+    y_train: y_train_surv_mimiciv.p
+    y_val: y_val_surv_mimiciv.p
+    durations_test: durations_test_mimiciv.npy
+    events_test: events_test_mimiciv.npy
+    cuts: cuts_mimiciv.npy
+    out_features: out_features_mimiciv.npy
+    n_events: n_events_mimiciv.npy
+    feature_names: feature_names.pkl
+    modality_info: modality_info.pkl
+    scaler: scaler.pkl
+    train_mask: x_train_mimiciv_mask.npy
+    val_mask: x_val_mimiciv_mask.npy
+    test_mask: x_test_mimiciv_mask.npy
+
+logging:
+  level: INFO
+  save_log: true
+  log_file: mimiciv_preprocessing.log
