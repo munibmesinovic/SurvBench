@@ -1,0 +1,27 @@
+# Core data processing
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# Survival analysis
+pycox>=0.2.3
+torchtuples>=0.2.2
+torch>=2.0.0
+
+# Configuration
+pyyaml>=6.0
+
+# Progress bars
+tqdm>=4.65.0
+
+# Testing (optional)
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Visualization (optional)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Jupyter notebooks (optional)
+jupyter>=1.0.0
+notebook>=7.0.0

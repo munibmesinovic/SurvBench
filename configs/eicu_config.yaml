@@ -1,0 +1,69 @@
+# eICU Dataset Configuration
+
+dataset:
+  name: eicu
+  base_dir: /path/to/eicu/data  # UPDATE THIS PATH
+  
+  files:
+    labels: preprocessed_labels.csv
+    flat: preprocessed_flat.csv
+    timeseries_lab: timeseries_lab.csv
+    timeseries_aperiodic: timeseries_aperiodic.csv
+  
+  cohort:
+    min_stay_hours: 24
+    max_age: 89
+    exclude_columns:
+      - nullweight
+      - nullheight
+      - '> 89'
+
+preprocessing:
+  num_windows: 6
+  window_size_hours: 4
+  max_hours: 24
+  max_horizon_hours: 240
+  n_time_bins: 10
+  discretisation_method: quantiles
+  missingness_threshold: 0.01
+  event_col: actualhospitalmortality
+  duration_col: unitdischargeoffset_hours
+  
+  imputation:
+    static: mean
+    dynamic: zero
+  
+  scaling:
+    method: standard
+    apply_to: dynamic
+
+splits:
+  train: 0.7
+  val: 0.1
+  test: 0.2
+  seed: 42
+  split_by: patient
+
+modalities:
+  timeseries: true
+  static: true
+  icd: false
+  radiology: false
+
+output:
+  dir: /path/to/output/eicu_processed  # UPDATE THIS PATH
+  prefix: eicu
+  save_format: numpy
+  
+  files:
+    x_train: x_train_eicu.npy
+    x_val: x_val_eicu.npy
+    x_test: x_test_eicu.npy
+    y_train: y_train_surv_eicu.p
+    y_val: y_val_surv_eicu.p
+    durations_test: durations_test_eicu.npy
+    events_test: events_test_eicu.npy
+    cuts: cuts_eicu.npy
+    out_features: out_features_eicu.npy
+    feature_names: feature_names.pkl
+    scaler: scaler.pkl
