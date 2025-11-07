@@ -544,6 +544,3 @@ If you use `SurvBench` or its underlying data loaders in your research, please c
 
 > TBD
 
-
-
->>>>>>> 87d7a55342d323f60f7b2a6142a3ecef2738af55
