@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # SurvBench: A Standardised Preprocessing Pipeline for Multi-Modal EHR Survival Analysis
 
 `SurvBench` is a Python-based preprocessing pipeline designed to bridge the gap between raw, complex Electronic Health Record (EHR) datasets and the clean, windowed, multi-modal tensors required by deep learning survival analysis models.
