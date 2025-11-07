@@ -1,30 +1,25 @@
-Here is a professional README for your `SurvBench` repository. I have written it from the perspective of a researcher, focusing on clear, practical, and detailed instructions for setup and usage, as you requested.
+# SurvBench: A Standardised Preprocessing Pipeline for Multi-Modal EHR Survival Analysis
+
+`SurvBench` is a Python-based preprocessing pipeline designed to bridge the gap between raw, complex Electronic Health Record (EHR) datasets and the clean, windowed, multi-modal tensors required by deep learning survival analysis models.
+
+Reproducibility in EHR research is challenging, especially in the preprocessing phase. This repository provides a standardised, configurable, and open-source tool to convert raw EHR files into a consistent format suitable for training and evaluating deep learning survival models, including those that handle competing risks.
 
 -----
 
-# SurvBench: A Standardized Preprocessing Pipeline for Multi-Modal EHR Survival Analysis
-
-`SurvBench` is a Python-based preprocessing pipeline designed to bridge the gap between raw, complex Electronic Health Record (EHR) datasets and the clean, windowed, multi-modal tensors required by modern survival analysis models.
-
-Reproducibility in EHR research is challenging, especially in the preprocessing phase. This repository provides a standardized, configurable, and open-source tool to convert raw EHR files into a consistent format suitable for training and evaluating deep learning survival models, including those that handle competing risks.
-
-[cite\_start]This pipeline was developed to support the experiments in **MM-GraphSurv** [cite: 1] and related projects.
-
------
-
-## 🔬 Key Features
+## Key features include
 
   * **Raw-to-Tensor:** Ingests raw CSVs directly from PhysioNet. No intermediate, pre-processed files are required.
-  * **Multi-Dataset Support:** Provides data loaders for three major critical care and emergency datasets:
-      * **MIMIC-IV** (v2.2)
+  * **Multi-dataset support:** Provides data loaders for three major critical care and emergency datasets:
+      * **MIMIC-IV** (v3.2)
       * **eICU** (v2.0)
-      * **MC-MED** (Emergency Department dataset)
-  * **Multi-Modal by Design:** Seamlessly loads, aligns, and aggregates features from different modalities:
+      * **MC-MED** (Emergency Department)
+  * **Multi-Modal:** Seamlessly loads, aligns, and aggregates features from different modalities:
       * **Time-Series:** Vitals (periodic and aperiodic) and Lab results.
       * **Static:** Demographics, admission details, and triage information.
       * **Structural:** ICD diagnoses histories (for MIMIC-IV and MC-MED).
-  * **Survival-Specific:** Natively handles both **single-risk** (e.g., in-hospital mortality) and **competing-risk** (e.g., discharge, ICU admission, death) scenarios.
-  * **Configurable Pipeline:** All parameters—time windows, horizons, feature selection, and paths—are controlled via simple YAML config files.
+      * **Radiography:** clinical notes of radiography scans (for MIMIC-IV and MC-MED).
+  * **Survival-specific:** Natively handles both single-risk (e.g., in-hospital mortality) and competing-risk (e.g., discharge, ED observation, ICU admission, death) scenarios.
+  * **Configurable pipeline:** All parameters—time windows, horizons, feature selection, and paths—are controlled via YAML config files.
 
 -----
 
@@ -48,19 +43,19 @@ Reproducibility in EHR research is challenging, especially in the preprocessing 
 
 -----
 
-## 2\. Dataset Setup
+## 2\. Dataset setup
 
-This is the most critical step. The pipeline reads raw CSVs. You must download them from their respective sources and place them in a directory.
+The pipeline reads raw CSVs. You must download them from their respective sources and place them in a directory.
 
 ### eICU (v2.0)
 
 1.  **Download:** Obtain access and download the raw CSVs from the [eICU Collaborative Research Database on PhysioNet](https://physionet.org/content/eicu-crd/2.0/).
-2.  **Required Files:** You only need the following four files. You can use the `.csv` or `.csv.gz` versions. The config `configs/eicu_config.yaml` is set up for the `.gz` versions, which is recommended.
+2.  **Required files:** You only need the following four files. You can use the `.csv` or `.csv.gz` versions. The config `configs/eicu_config.yaml` is set up for the `.gz` versions, which is recommended.
       * `patient.csv` (or `patient.csv.gz`)
       * `lab.csv` (or `lab.csv.gz`)
       * `vitalPeriodic.csv` (or `vitalPeriodic.csv.gz`)
       * `vitalAperiodic.csv` (or `vitalAperiodic.csv.gz`)
-3.  **Folder Structure:** Place these files in a single directory. Example:
+3.  **Folder structure:** Place these files in a single directory. Example:
     ```
     data/eicu_raw_data/
     ├── lab.csv.gz
@@ -72,7 +67,7 @@ This is the most critical step. The pipeline reads raw CSVs. You must download t
 
 ### MIMIC-IV (v2.2)
 
-1.  **Download:** Obtain access and download the raw CSVs from the [MIMIC-IV dataset on PhysioNet](https://physionet.org/content/mimiciv/2.2/).
+1.  **Download:** Obtain access and download the raw CSVs from the [MIMIC-IV dataset on PhysioNet](https://physionet.org/content/mimiciv/3.2/).
 2.  **Required Files:** The pipeline requires files from the `icu` and `hosp` modules.
       * `icu/icustays.csv`
       * `hosp/patients.csv`
@@ -81,7 +76,7 @@ This is the most critical step. The pipeline reads raw CSVs. You must download t
       * `hosp/labevents.csv`
       * `hosp/diagnoses_icd.csv`
       * `hosp/radiology.csv` (Optional, only needed if `radiology: true` in config)
-3.  **Folder Structure:** Place these files in a directory *maintaining their module folders (`hosp`, `icu`)*.
+3.  **Folder structure:** Place these files in a directory maintaining their module folders (`hosp`, `icu`).
     ```
     data/mimiciv_raw_data/
     ├── hosp/
@@ -106,20 +101,57 @@ This dataset was used in the CausalSurv and MM-GraphSurv papers and is not publi
   * `pmh.csv` (ICD code history)
   * `rads.csv` (Radiology report text)
 
+You're right, that's a great idea. A user needs to know *how* to customize the pipeline beyond just changing file paths.
+
+Here is the revised "Running the Pipeline" section for your `README.md`. It now includes a detailed breakdown of the key configuration parameters you can tune.
+
 -----
 
-## 3\. 🚀 Running the Pipeline
+## 3\. Running the pipeline
 
 The preprocessing is executed using the `scripts/run_preprocessing.py` script.
 
-**Step 1: Edit the Configuration File**
+### 3.1. Configuration
 
-Choose the config file for the dataset you want to process (e.g., `configs/eicu_config.yaml`). You **must** edit the following paths:
+Before running, you can customise the entire preprocessing logic by editing the `.yaml` config file for your chosen dataset (e.g., `configs/mimiciv_config.yaml`). Here are the most important parameters you can change:
 
-  * **`dataset.base_dir`**: Set this to the full path of your raw data directory (e.g., `/Users/munib/data/eicu_raw_data`).
-  * **`output.dir`**: Set this to the full path where you want the processed files to be saved (e.g., `/Users/munib/data/eicu_processed`).
+**`dataset`**
 
-**Step 2: Run the Script**
+  * **`base_dir`**: **(Required)** The full path to your raw data directory.
+  * **`files`**: Maps the pipeline's internal keys (like `timeseries_vitals`) to the actual filenames in your `base_dir` (e.g., `chartevents.csv`).
+  * **`cohort`**: Defines the initial patient filters, such as `min_stay_hours` or `max_age`.
+  * **`competing_risks`**: Specific to `mcmed_config.yaml`, this enables competing risk logic and maps event codes (e.g., 1, 2, 3) to human-readable names.
+
+**`preprocessing`**
+
+  * **`max_hours`**: Defines the length of the input observation window (e.g., `24` for the first 24 hours of data).
+  * **`num_windows`** & **`window_size_hours`**: Controls the temporal aggregation. The `max_hours` will be divided into `num_windows` bins, each `window_size_hours` long. For example, `max_hours: 24`, `num_windows: 6`, and `window_size_hours: 4` will create a tensor of shape `(N, 6, F)` where each of the 6 time steps represents a 4-hour average.
+  * **`max_horizon_hours`**: Sets the output survival horizon. Any event or censoring occurring after this time (e.g., `240` hours / 10 days) will be censored at this timestamp.
+  * **`n_time_bins`**: The number of discrete bins to create for discrete-time survival models (e.g., 10).
+  * **`missingness_threshold`**: Any time-series feature (e.g., a specific lab test) that is present in less than this percentage of the training set (e.g., `0.01` or 1%) will be discarded entirely.
+  * **`imputation`** & **`scaling`**: Lets you control the imputation method (`static: mean`, `dynamic: zero`) and scaling (`standard`).
+
+**`modalities`**
+
+  * These are boolean flags (`true`/`false`) that let you turn entire modalities on or off. For example, you can set `icd: false` and `radiology: false` in `mimiciv_config.yaml` to run a "vitals + static" experiment without the multi-hour embedding time.
+
+**`output`**
+
+  * **`dir`**: **(Required)** The full path where you want the processed files to be saved.
+  * **`prefix`**: The prefix for all output filenames (e.g., `mimiciv` results in `x_train_mimiciv.npy`).
+
+### 3.2. How to run
+
+**Step 1: Edit the configuration file**
+
+Open the config file for the dataset you want to process (e.g., `configs/eicu_config.yaml`). At a minimum, you must edit the following paths:
+
+  * **`dataset.base_dir`**: Set this to the full path of your raw data directory.
+  * **`output.dir`**: Set this to the full path where you want the processed files to be saved.
+
+Tweak any other parameters (like `max_hours` or `modalities`) to fit your experiment.
+
+**Step 2: Run the ccript**
 
 From the `SurvBench` root directory, run the script pointing to your chosen config file.
 
@@ -135,17 +167,11 @@ python scripts/run_preprocessing.py --config configs/eicu_config.yaml
 python scripts/run_preprocessing.py --config configs/mimiciv_config.yaml
 ```
 
-**To process MC-MED:**
-
-```bash
-python scripts/run_preprocessing.py --config configs/mcmed_config.yaml
-```
-
 The script will execute the full pipeline: loading the cohort, splitting by patient, processing all modalities, aggregating into time windows, applying imputation and scaling, and saving the final files.
 
 -----
 
-## 4\. 💾 Output Files
+## 4\. Output
 
 After running, your specified `output.dir` will contain the following files (using `eicu` as an example prefix):
 
@@ -196,7 +222,7 @@ print(f"Loaded training data: {x_train.shape}")
 print(f"Loaded training mask: {m_train.shape}")
 print(f"Loaded labels: {durations_train.shape}, {events_train.shape}")
 
-print(f"\\n--- Feature Info ---")
+print(f"\\nFeature info")
 print(f"Total features: {feature_info['num_total']}")
 print(f"Dynamic features: {feature_info['num_dynamic']}")
 print(f"Static features: {feature_info['num_static']}")
@@ -220,6 +246,7 @@ time_bins = np.load(data_dir / "cuts_eicu.npy")
 print(f"\\nTime bins for discrete survival: {time_bins}")
 ```
 
-If you use `SurvBench` or its underlying data loaders in your research, please cite our AISTATS 2024 paper:
+If you use `SurvBench` or its underlying data loaders in your research, please cite our paper:
 
-> Munib Mesinovic, Peter Watkinson, Tingting Zhu. (2024). *MM-GraphSurv: Interpretable Multi-Modal Graph for Survival Prediction with Electronic Health Records*. [cite\_start]In Proceedings of the 27th International Conference on Artificial Intelligence and Statistics (AISTATS). [cite: 1, 3, 5, 15]
+> TBD
+
