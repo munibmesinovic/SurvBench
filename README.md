@@ -19,7 +19,7 @@ This repository provides a standardised, configurable, and open-source tool to c
       * **Structural:** ICD diagnoses histories (for MIMIC-IV and MC-MED).
       * **Radiography:** clinical notes of radiography scans (for MIMIC-IV and MC-MED).
   * **Survival-specific:** Natively handles both single-risk (e.g., in-hospital mortality) and competing-risk (e.g., discharge, ED observation, ICU admission, death) scenarios.
-  * **Configurable pipeline:** All parameters—time windows, horizons, feature selection, and paths—are controlled via YAML config files.
+  * **Configurable pipeline:** All parameters, such as time windows, horizons, feature selection, and paths, are controlled via YAML config files.
 
 -----
 
