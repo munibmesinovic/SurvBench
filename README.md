@@ -18,6 +18,7 @@ This repository provides a standardised, configurable, and open-source tool to c
       * **Static:** Demographics, admission details, and triage information.
       * **Structural:** ICD diagnoses histories (for MIMIC-IV and MC-MED).
       * **Radiography:** clinical notes of radiography scans (for MIMIC-IV and MC-MED).
+  * NOTE: Even if you do imputation, the preprocessing will generate missingness masks for your arrays in case you don't want to use imputed data
   * **Survival-specific:** Natively handles both single-risk (e.g., in-hospital mortality) and competing-risk (e.g., discharge, ED observation, ICU admission, death) scenarios.
   * **Configurable pipeline:** All parameters, such as time windows, horizons, feature selection, and paths, are controlled via YAML config files.
 
@@ -174,6 +175,7 @@ python scripts/run_preprocessing.py --config configs/mimiciv_config.yaml
 ```
 
 The script will execute the full pipeline: loading the cohort, splitting by patient, processing all modalities, aggregating into time windows, applying imputation and scaling, and saving the final files.
+NOTE: Even if you do imputation, the preprocessing will generate missingness masks for your arrays in case you don't want to use imputed data
 
 -----
 
