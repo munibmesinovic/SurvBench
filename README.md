@@ -50,7 +50,7 @@ The pipeline reads raw CSVs. You must download them from their respective source
 ### eICU (v2.0)
 
 1.  **Download:** Obtain access and download the raw CSVs from the [eICU Collaborative Research Database on PhysioNet](https://physionet.org/content/eicu-crd/2.0/).
-2.  **Required files:** You only need the following four files. You can use the `.csv` or `.csv.gz` versions. The config `configs/eicu_config.yaml` is set up for the `.gz` versions, which is recommended.
+2.  **Required files:** You only need the following four files. You can use the `.csv` or `.csv.gz` versions. The config `configs/eicu_config.yaml` is set up for the `.gz` versions.
       * `patient.csv` (or `patient.csv.gz`)
       * `lab.csv` (or `lab.csv.gz`)
       * `vitalPeriodic.csv` (or `vitalPeriodic.csv.gz`)
