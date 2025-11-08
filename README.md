@@ -2,7 +2,7 @@
 
 `SurvBench` is a Python-based preprocessing pipeline designed to bridge the gap between raw, complex Electronic Health Record (EHR) datasets and the clean, windowed, multi-modal tensors required by deep learning survival analysis models.
 
-Reproducibility in EHR research is challenging, especially in the preprocessing phase. This repository provides a standardised, configurable, and open-source tool to convert raw EHR files into a consistent format suitable for training and evaluating deep learning survival models, including those that handle competing risks.
+This repository provides a standardised, configurable, and open-source tool to convert raw EHR files into a consistent format suitable for training and evaluating deep learning survival models, including those that handle competing risks.
 
 -----
 
