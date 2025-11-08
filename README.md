@@ -91,19 +91,24 @@ The pipeline reads raw CSVs. You must download them from their respective source
     ```
 4.  **Configuration:** You will later update `configs/mimiciv_config.yaml` to point to this `data/mimiciv_raw_data` directory.
 
-### MC-MED (Private)
+### MC-MED (v1.0.1)
 
-This dataset was used in the CausalSurv and MM-GraphSurv papers and is not publicly available. If you have access to it, the `mcmed_loader.py` expects the following files:
+1. **Download:** Obtain access and download the raw CSVs from the [MC-MED dataset on PhysioNet](https://physionet.org/content/mc-med/1.0.1/).
 
   * `visits.csv` (for labels and static features)
   * `numerics.csv` (time-series vitals)
   * `labs.csv` (time-series labs)
   * `pmh.csv` (ICD code history)
   * `rads.csv` (Radiology report text)
-
-You're right, that's a great idea. A user needs to know *how* to customize the pipeline beyond just changing file paths.
-
-Here is the revised "Running the Pipeline" section for your `README.md`. It now includes a detailed breakdown of the key configuration parameters you can tune.
+2. **Folder structure:** Place these files in a directory:
+   ```
+   data/mcmed_raw_data/
+   ├── visits.csv
+   ├── numerics.csv
+   ├── labs.csv
+   └── pmh.csv
+   └── rads.csv
+   ```
 
 -----
 
