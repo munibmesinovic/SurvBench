@@ -221,7 +221,7 @@ After running, your specified `output.dir` will contain the following files (usi
 
 -----
 
-## 5\. Example: Using the Processed Data
+## 5\. Example: Using the data
 
 Here is a simple example of how to load and use the preprocessed data for model training.
 
