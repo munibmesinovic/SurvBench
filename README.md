@@ -135,6 +135,7 @@ Before running, you can customise the entire preprocessing logic by editing the 
   * **`n_time_bins`**: The number of discrete bins to create for discrete-time survival models (e.g., 10).
   * **`missingness_threshold`**: Any time-series feature (e.g., a specific lab test) that is present in less than this percentage of the training set (e.g., `0.01` or 1%) will be discarded entirely.
   * **`imputation`** & **`scaling`**: Lets you control the imputation method (`static: mean`, `dynamic: zero`) and scaling (`standard`).
+  * NOTE: Even if you do imputation, the preprocessing will generate missingness masks for your arrays in case you don't want to use imputed data
 
 **`modalities`**
 
