@@ -157,7 +157,7 @@ Open the config file for the dataset you want to process (e.g., `configs/eicu_co
 
 Tweak any other parameters (like `max_hours` or `modalities`) to fit your experiment.
 
-**Step 2: Run the ccript**
+**Step 2: Run the script**
 
 From the `SurvBench` root directory, run the script pointing to your chosen config file.
 
