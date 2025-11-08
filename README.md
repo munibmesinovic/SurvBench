@@ -65,7 +65,7 @@ The pipeline reads raw CSVs. You must download them from their respective source
     ```
 4.  **Configuration:** You will later update `configs/eicu_config.yaml` to point to this directory.
 
-### MIMIC-IV (v2.2)
+### MIMIC-IV (v3.2)
 
 1.  **Download:** Obtain access and download the raw CSVs from the [MIMIC-IV dataset on PhysioNet](https://physionet.org/content/mimiciv/3.2/).
 2.  **Required Files:** The pipeline requires files from the `icu` and `hosp` modules.
