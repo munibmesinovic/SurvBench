@@ -7,6 +7,8 @@ and generates a few key plots to help understand the processed dataset:
 1. A Kaplan-Meier survival curve (or competing risks CIF).
 2. A histogram of event/censoring durations.
 3. A plot of mean time-series feature trajectories.
+4. (New) ICD Code statistics (if available, e.g., MIMIC-IV).
+5. (New) Radiology Embedding statistics (if available).
 
 Requires: lifelines, matplotlib, seaborn
 """
@@ -17,6 +19,7 @@ import pickle
 import yaml
 import argparse
 import sys
+import warnings  # Added for clean output
 from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -117,12 +120,17 @@ def plot_feature_trajectories(x_train, m_train, feature_info, num_features_to_pl
     if num_features_to_plot > len(dynamic_names):
         num_features_to_plot = len(dynamic_names)
 
-    plot_indices = np.random.choice(len(dynamic_names), num_features_to_plot, replace=False)
+    # Use a fixed seed for reproducibility of random feature selection
+    rng = np.random.default_rng(42)
+    plot_indices = rng.choice(len(dynamic_names), num_features_to_plot, replace=False)
     plot_names = [dynamic_names[i] for i in plot_indices]
 
     # Calculate stats on the *observed-only* data
-    mean_trajectories = np.nanmean(x_dynamic_observed_only[:, :, plot_indices], axis=0)
-    std_trajectories = np.nanstd(x_dynamic_observed_only[:, :, plot_indices], axis=0)
+    # We suppress warnings because some features might be completely missing in a window, which is fine.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        mean_trajectories = np.nanmean(x_dynamic_observed_only[:, :, plot_indices], axis=0)
+        std_trajectories = np.nanstd(x_dynamic_observed_only[:, :, plot_indices], axis=0)
 
     num_windows = x_train.shape[1]
     time_steps = np.arange(num_windows)
@@ -131,9 +139,12 @@ def plot_feature_trajectories(x_train, m_train, feature_info, num_features_to_pl
     for i in range(num_features_to_plot):
         mean = mean_trajectories[:, i]
         std = std_trajectories[:, i]
-        plt.plot(time_steps, mean, label=f"{plot_names[i]} (mean)", marker='o')
-        # Use a much lighter alpha
-        plt.fill_between(time_steps, mean - std, mean + std, alpha=0.1)
+
+        # Only plot if we have valid data
+        if not np.isnan(mean).all():
+            plt.plot(time_steps, mean, label=f"{plot_names[i]} (mean)", marker='o')
+            # Use a much lighter alpha
+            plt.fill_between(time_steps, mean - std, mean + std, alpha=0.1)
 
     plt.title(f"Mean Trajectories of {num_features_to_plot} Random Dynamic Features (Standard Scaled, Observed Only)")
     plt.xlabel("Time Window")
@@ -141,6 +152,66 @@ def plot_feature_trajectories(x_train, m_train, feature_info, num_features_to_pl
     plt.xticks(time_steps)
     plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(save_path)
+    print(f"  Saved to {save_path.name}")
+    plt.close()
+
+
+def plot_icd_statistics(x_icd, save_path):
+    """
+    Plots statistics for ICD codes (MIMIC-IV specific).
+    x_icd: (N, F_icd) binary matrix.
+    """
+    print(f"Plotting ICD code statistics...")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # 1. Codes per patient (Row sums)
+    codes_per_patient = x_icd.sum(axis=1)
+    sns.histplot(codes_per_patient, bins=30, kde=False, ax=ax1, color='purple')
+    ax1.set_title("Distribution of ICD Codes per Patient")
+    ax1.set_xlabel("Number of Codes")
+    ax1.set_ylabel("Count of Patients")
+
+    # 2. Code Frequencies (Column sums)
+    # We plot the Top 50 most common codes
+    code_freqs = x_icd.sum(axis=0)
+    # Sort descending
+    code_freqs = np.sort(code_freqs)[::-1]
+    top_n = min(50, len(code_freqs))
+
+    ax2.bar(range(top_n), code_freqs[:top_n], color='teal')
+    ax2.set_title(f"Frequency of Top {top_n} Most Common Codes")
+    ax2.set_xlabel("Rank of ICD Code")
+    ax2.set_ylabel("Frequency (Count)")
+    ax2.set_yscale('log')  # Log scale often helps with long-tail distributions
+
+    plt.tight_layout()
+    plt.savefig(save_path)
+    print(f"  Saved to {save_path.name}")
+    plt.close()
+
+
+def plot_radiology_embedding_stats(x_rad, save_path):
+    """
+    Plots basic stats for radiology embeddings (MIMIC-IV specific).
+    x_rad: (N, Embedding_Dim) matrix.
+    """
+    print(f"Plotting radiology embedding statistics...")
+    plt.figure(figsize=(10, 6))
+
+    # Flatten to see distribution of embedding values (sanity check for normalization)
+    sample_values = x_rad.flatten()
+    # Downsample for plotting if too large
+    if len(sample_values) > 10000:
+        rng = np.random.default_rng(42)
+        sample_values = rng.choice(sample_values, 10000, replace=False)
+
+    sns.histplot(sample_values, bins=50, kde=True, color='orange')
+    plt.title(f"Distribution of Radiology Embedding Values (Dimension: {x_rad.shape[1]})")
+    plt.xlabel("Value")
+    plt.ylabel("Density")
+
     plt.tight_layout()
     plt.savefig(save_path)
     print(f"  Saved to {save_path.name}")
@@ -155,7 +226,7 @@ def main():
         '--config',
         type=str,
         required=True,
-        help='Path to configuration YAML file (e.g., configs/eicu_config.yaml)'
+        help='Path to configuration YAML file (e.g., configs/mimiciv_config.yaml)'
     )
     args = parser.parse_args()
 
@@ -180,9 +251,20 @@ def main():
         # Load features
         x_train = np.load(output_dir / files['x_train'])
 
-        # --- THIS IS THE CRITICAL NEW LINE ---
-        m_train = np.load(output_dir / files['train_mask'])
-        # --- END NEW LINE ---
+        # Load mask (Robust loading)
+        mask_file_key = 'train_mask'
+        if mask_file_key in files:
+            mask_path = output_dir / files[mask_file_key]
+        else:
+            # Fallback if key missing in config
+            mask_path = output_dir / str(files['x_train']).replace('.npy', '_mask.npy')
+            print(f"  (Note: '{mask_file_key}' key not found, trying fallback: {mask_path.name})")
+
+        if not mask_path.exists():
+            # Fallback for eICU where mask might be named slightly differently
+            mask_path = output_dir / "x_train_eicu_mask.npy"
+
+        m_train = np.load(mask_path)
 
         # Load metadata
         with open(output_dir / files['feature_names'], 'rb') as f:
@@ -195,14 +277,27 @@ def main():
         outcome_mapping = config.get('dataset', {}).get('competing_risks', {}).get('outcome_mapping',
                                                                                    {0: "Censored", 1: "Event"})
 
-        print("  ✓ All data loaded.")
+        print("  ✓ Core data loaded.")
 
     except FileNotFoundError as e:
         print(f"  ✗ Error loading file: {e}")
         print("  Please run the preprocessing pipeline first.")
         sys.exit(1)
 
-    # --- 2. Generate Plots ---
+    # --- 2. Check for Additional Modalities ---
+    x_icd = None
+    icd_path = output_dir / "x_train_icd.npy"
+    if icd_path.exists():
+        print("  ✓ Found ICD data.")
+        x_icd = np.load(icd_path)
+
+    x_rad = None
+    rad_path = output_dir / "x_train_radiology.npy"
+    if rad_path.exists():
+        print("  ✓ Found Radiology data.")
+        x_rad = np.load(rad_path)
+
+    # --- 3. Generate Plots ---
     print("\n[2/3] Generating visualizations...")
 
     # Plot 1: Survival Curve(s)
@@ -222,6 +317,14 @@ def main():
         x_train, m_train, feature_info,
         save_path=figures_dir / "feature_trajectories.png"
     )
+
+    # Plot 4: ICD Statistics
+    if x_icd is not None:
+        plot_icd_statistics(x_icd, figures_dir / "icd_statistics.png")
+
+    # Plot 5: Radiology Statistics
+    if x_rad is not None:
+        plot_radiology_embedding_stats(x_rad, figures_dir / "radiology_embedding_stats.png")
 
     print("\n[3/3] Visualization complete!")
 

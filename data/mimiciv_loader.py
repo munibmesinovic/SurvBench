@@ -134,9 +134,24 @@ class MIMICIVDataLoader(BaseDataLoader):
         cohort_df['true_death_time'] = cohort_df['deathtime'].combine_first(cohort_df['dod'])
         time_to_death_hours = (cohort_df['true_death_time'] - cohort_df['intime']).dt.total_seconds() / 3600
 
+        # Calculate time to hospital discharge
+        # (ensure dischtime is loaded in _get_cohort_df)
+        time_to_discharge = (cohort_df['dischtime'] - cohort_df['intime']).dt.total_seconds() / 3600
+
+        # 1. Determine the effective censoring time (Discharge or Horizon, whichever is first)
+        censoring_time = np.minimum(time_to_discharge, self.max_label_hours)
+
+        # 2. Define Event: Death must happen BEFORE the horizon AND BEFORE/AT discharge
+        # (If they die after discharge, they are censored at discharge for "In-Hospital Mortality")
         is_event = (time_to_death_hours <= self.max_label_hours)
-        duration = np.where(is_event, time_to_death_hours, self.max_label_hours)
-        duration = np.maximum(0, duration)  # Handle rare data errors
+
+        # 3. Set Duration
+        # If Event: Use death time
+        # If Censored: Use discharge time (or horizon if they are still in hospital)
+        duration = np.where(is_event, time_to_death_hours, censoring_time)
+
+        # Cleanup
+        duration = np.maximum(0, duration)
         event = is_event.astype(int)
 
         return cohort_df[['stay_id']].copy().assign(duration_hours=duration, event=event)
@@ -245,26 +260,16 @@ class MIMICIVDataLoader(BaseDataLoader):
         ], names=['stay_id', 'hour_bin'])
         ts_hourly = ts_wide.reindex(all_hours)
 
-        # Aggregate into 6 windows (4 hours each)
-        ts_hourly['window'] = ts_hourly.index.get_level_values('hour_bin') // self.window_size_hours
-        ts_windowed = ts_hourly.groupby(['stay_id', 'window']).mean()
+        ts_windowed = ts_hourly.rename_axis(['admission_id', 'time_hours'])
 
-        # Ensure all 6 windows exist
-        all_windows = pd.MultiIndex.from_product([
-            cohort['stay_id'].unique(),
-            range(self.n_windows)
-        ], names=['stay_id', 'window'])
-        ts_windowed = ts_windowed.reindex(all_windows)
+        print(f"Final dynamic dataframe shape (Hourly): {ts_windowed.shape}")
 
-        # Rename index for pipeline compatibility
-        ts_windowed = ts_windowed.rename_axis(['admission_id', 'time_hours'])
-
-        print(f"Final dynamic dataframe shape: {ts_windowed.shape}")
-
-        # Missingness filtering (as in original repo logic)
+        # Missingness filtering
         train_ids = self.create_splits()['train']
         missingness_threshold = self.config['preprocessing']['missingness_threshold']
         print(f"Filtering features by missingness (threshold: {missingness_threshold})...")
+
+        # Ensure we only check missingness on training data
         ts_train = ts_windowed[ts_windowed.index.get_level_values('admission_id').isin(train_ids)]
         missingness = ts_train.notna().mean()
         cols_to_keep = missingness[missingness >= missingness_threshold].index
