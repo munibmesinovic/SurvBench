@@ -1,9 +1,8 @@
-<<<<<<< HEAD
 # SurvBench: A Standardised Preprocessing Pipeline for Multi-Modal EHR Survival Analysis
 
 `SurvBench` is a Python-based preprocessing pipeline designed to bridge the gap between raw, complex Electronic Health Record (EHR) datasets and the clean, windowed, multi-modal tensors required by deep learning survival analysis models.
 
-Reproducibility in EHR research is challenging, especially in the preprocessing phase. This repository provides a standardised, configurable, and open-source tool to convert raw EHR files into a consistent format suitable for training and evaluating deep learning survival models, including those that handle competing risks.
+This repository provides a standardised, configurable, and open-source tool to convert raw EHR files into a consistent format suitable for training and evaluating deep learning survival models, including those that handle competing risks.
 
 -----
 
@@ -66,9 +65,9 @@ The pipeline reads raw CSVs. You must download them from their respective source
     ```
 4.  **Configuration:** You will later update `configs/eicu_config.yaml` to point to this directory.
 
-### MIMIC-IV (v2.2)
+### MIMIC-IV (v3.1)
 
-1.  **Download:** Obtain access and download the raw CSVs from the [MIMIC-IV dataset on PhysioNet](https://physionet.org/content/mimiciv/3.2/).
+1.  **Download:** Obtain access and download the raw CSVs from the [MIMIC-IV dataset on PhysioNet](https://physionet.org/content/mimiciv/3.2/) and [MIMIC-IV-Note](https://physionet.org/content/mimic-iv-note/2.2/).
 2.  **Required Files:** The pipeline requires files from the `icu` and `hosp` modules.
       * `icu/icustays.csv`
       * `hosp/patients.csv`
@@ -76,7 +75,7 @@ The pipeline reads raw CSVs. You must download them from their respective source
       * `icu/chartevents.csv`
       * `hosp/labevents.csv`
       * `hosp/diagnoses_icd.csv`
-      * `hosp/radiology.csv` (Optional, only needed if `radiology: true` in config)
+      * `note/radiology.csv` (Optional, only needed if `radiology: true` in config, in MIMIC-IV-Note)
 3.  **Folder structure:** Place these files in a directory maintaining their module folders (`hosp`, `icu`).
     ```
     data/mimiciv_raw_data/
@@ -92,19 +91,15 @@ The pipeline reads raw CSVs. You must download them from their respective source
     ```
 4.  **Configuration:** You will later update `configs/mimiciv_config.yaml` to point to this `data/mimiciv_raw_data` directory.
 
-### MC-MED (Private)
+### MC-MED (v.1.0.1)
 
-This dataset was used in the CausalSurv and MM-GraphSurv papers and is not publicly available. If you have access to it, the `mcmed_loader.py` expects the following files:
+Obtain access and download the raw CSVs from the [MC-MED dataset on PhysioNet](https://physionet.org/content/mc-med/1.0.1/):
 
-  * `visits.csv` (for labels and static features)
-  * `numerics.csv` (time-series vitals)
-  * `labs.csv` (time-series labs)
-  * `pmh.csv` (ICD code history)
-  * `rads.csv` (Radiology report text)
-
-You're right, that's a great idea. A user needs to know *how* to customize the pipeline beyond just changing file paths.
-
-Here is the revised "Running the Pipeline" section for your `README.md`. It now includes a detailed breakdown of the key configuration parameters you can tune.
+  * `data/visits.csv` (for labels and static features)
+  * `data/numerics.csv` (time-series vitals)
+  * `data/labs.csv` (time-series labs)
+  * `data/pmh.csv` (ICD code history)
+  * `data/rads.csv` (Radiology report text)
 
 -----
 
@@ -152,7 +147,7 @@ Open the config file for the dataset you want to process (e.g., `configs/eicu_co
 
 Tweak any other parameters (like `max_hours` or `modalities`) to fit your experiment.
 
-**Step 2: Run the ccript**
+**Step 2: Run the script**
 
 From the `SurvBench` root directory, run the script pointing to your chosen config file.
 
@@ -542,8 +537,4 @@ print(f"\\nTime bins for discrete survival: {time_bins}")
 
 If you use `SurvBench` or its underlying data loaders in your research, please cite our paper:
 
-> TBD
-
-
-
->>>>>>> 87d7a55342d323f60f7b2a6142a3ecef2738af55
+> https://arxiv.org/pdf/2511.11935
