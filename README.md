@@ -10,7 +10,7 @@ This repository provides a standardised, configurable, and open-source tool to c
 
   * **Raw-to-Tensor:** Ingests raw CSVs directly from PhysioNet. No intermediate, pre-processed files are required.
   * **Multi-dataset support:** Provides data loaders for three major critical care and emergency datasets:
-      * **MIMIC-IV** (v3.2)
+      * **MIMIC-IV** (v3.1)
       * **eICU** (v2.0)
       * **MC-MED** (Emergency Department)
   * **Multi-Modal:** Seamlessly loads, aligns, and aggregates features from different modalities:
