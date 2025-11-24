@@ -34,34 +34,34 @@ def test_imports():
     return True
 
 
-def test_survival_benchmark():
-    print("\\nTesting survival_benchmark package...")
+def test_survbench():
+    print("\\nTesting SurvBench package...")
 
     try:
-        import survival_benchmark
-        print(f"  Package version: {survival_benchmark.__version__}")
+        sys.path.insert(0, '.')
 
-        from survival_benchmark import PreprocessingPipeline
+        from preprocessing.pipeline import PreprocessingPipeline
         print("  PreprocessingPipeline imported")
 
-        from survival_benchmark.data import BaseDataLoader, eICUDataLoader
+        from data.base_loader import BaseDataLoader
+        from data.eicu_loader import eICUDataLoader
         print("  Data loaders imported")
 
-        from survival_benchmark.preprocessing import SurvivalLabelsProcessor
+        from preprocessing.labels import SurvivalLabelsProcessor
         print("  Preprocessing modules imported")
 
         print("\\nPackage structure verified")
         return True
 
     except ImportError as e:
-        print(f"\\nFailed to import survival_benchmark: {e}")
-        print("\\nTry installing with: pip install -e .")
+        print(f"\\nFailed to import SurvBench modules: {e}")
+        print("\\nMake sure you're in the SurvBench directory")
         return False
 
 
 def main():
     print("=" * 60)
-    print("SURVIVAL BENCHMARK - INSTALLATION TEST")
+    print("SURVBENCH - INSTALLATION TEST")
     print("=" * 60)
 
     success = True
@@ -69,7 +69,7 @@ def main():
     if not test_imports():
         success = False
 
-    if not test_survival_benchmark():
+    if not test_survbench():
         success = False
 
     print("\\n" + "=" * 60)
