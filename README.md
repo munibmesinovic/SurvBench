@@ -10,7 +10,7 @@ This repository provides a standardised, configurable, and open-source tool to c
 
   * **Raw-to-Tensor:** Ingests raw CSVs directly from PhysioNet. No intermediate, pre-processed files are required.
   * **Multi-dataset support:** Provides data loaders for three major critical care and emergency datasets:
-      * **MIMIC-IV** (v3.2)
+      * **MIMIC-IV** (v3.1)
       * **eICU** (v2.0)
       * **MC-MED** (v1.0.1)
   * **Multi-Modal:** Seamlessly loads, aligns, and aggregates features from different modalities:
@@ -65,9 +65,9 @@ The pipeline reads raw CSVs. You must download them from their respective source
     ```
 4.  **Configuration:** You will later update `configs/eicu_config.yaml` to point to this directory.
 
-### MIMIC-IV (v3.2)
+### MIMIC-IV (v3.1)
 
-1.  **Download:** Obtain access and download the raw CSVs from the [MIMIC-IV dataset on PhysioNet](https://physionet.org/content/mimiciv/3.2/) and [MIMIC-IV-Note](https://physionet.org/content/mimic-iv-note/2.2/).
+1.  **Download:** Obtain access and download the raw CSVs from the [MIMIC-IV dataset on PhysioNet](https://physionet.org/content/mimiciv/3.1/) and [MIMIC-IV-Note](https://physionet.org/content/mimic-iv-note/2.2/).
 2.  **Required Files:** The pipeline requires files from the `icu`, `hosp`, and `note` modules.
       * `icu/icustays.csv`
       * `hosp/patients.csv`
