@@ -52,7 +52,7 @@ modalities:
   timeseries: true
   static: true
   icd: true
-  radiology: false # <-- SET TO FALSE to skip (saves 3+ hours)
+  radiology: true # <-- SET TO FALSE to skip (saves 3+ hours)
 
 # ICD code processing (if enabled)
 icd_processing:

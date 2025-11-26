@@ -335,9 +335,12 @@ class MIMICIVDataLoader(BaseDataLoader):
         cohort = self._get_cohort_df()
         cohort_ids = self.cohort_df.index.unique()
 
-        rad_path = self.base_dir / self.files['radiology_embeddings']  # Using this key for 'radiology.csv'
+        # Create the full path once
+        rad_path = self.base_dir / self.files['radiology_embeddings']
+
         print(f"\nExtracting {self.files['radiology_embeddings']} (Radiology Reports)...")
-        radiology = pd.read_csv(os.path.join(self.base_dir, rad_path), parse_dates=['charttime'])
+
+        radiology = pd.read_csv(rad_path, parse_dates=['charttime'])
 
         radiology = radiology.merge(
             cohort[['stay_id', 'subject_id', 'hadm_id', 'intime']],
